@@ -26,7 +26,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # Get the launch directory
-    bringup_dir = get_package_share_directory("pb2025_vision_bringup")
+    bringup_dir = get_package_share_directory("pb2025_sentry_bringup")
 
     # Create the launch configuration variables
     namespace = LaunchConfiguration("namespace")
@@ -44,7 +44,7 @@ def generate_launch_description():
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
         "rviz_config",
-        default_value=os.path.join(bringup_dir, "rviz", "vision_default_view.rviz"),
+        default_value=os.path.join(bringup_dir, "rviz", "sentry_default_view.rviz"),
         description="Full path to the RViz config file to use",
     )
 

@@ -23,9 +23,15 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression, TextSubstitution
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+    TextSubstitution,
+)
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
+from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
 
 
@@ -34,7 +40,6 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory("pb2025_sentry_bringup")
 
     serial_bringup_dir = get_package_share_directory("standard_robot_pp_ros2")
-    vision_bringup_dir = get_package_share_directory("pb2025_vision_bringup")
     navigation_bringup_dir = get_package_share_directory("pb2025_nav_bringup")
     bt_bringup_dir = get_package_share_directory("pb2025_sentry_behavior")
 
@@ -42,6 +47,7 @@ def generate_launch_description():
     ## Serial
     robot_name = LaunchConfiguration("robot_name")
     ## Vision
+    use_vision = LaunchConfiguration("use_vision")
     detector = LaunchConfiguration("detector")
     use_hik_camera = LaunchConfiguration("use_hik_camera")
     ## Navigation
@@ -82,6 +88,12 @@ def generate_launch_description():
         description="The file name of the robot xmacro to be used",
     )
 
+    declare_use_vision_cmd = DeclareLaunchArgument(
+        "use_vision",
+        default_value="False",
+        description="Whether to start the camera and vision pipeline",
+    )
+
     declare_detector_cmd = DeclareLaunchArgument(
         "detector",
         default_value="opencv",
@@ -90,7 +102,7 @@ def generate_launch_description():
 
     declare_use_hik_camera_cmd = DeclareLaunchArgument(
         "use_hik_camera",
-        default_value="True",
+        default_value="False",
         description="Whether to bringup hik camera node",
     )
 
@@ -194,8 +206,15 @@ def generate_launch_description():
 
     start_vision_launch_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(vision_bringup_dir, "launch", "rm_vision_reality_launch.py")
+            PathJoinSubstitution(
+                [
+                    FindPackageShare("pb2025_vision_bringup"),
+                    "launch",
+                    "rm_vision_reality_launch.py",
+                ]
+            )
         ),
+        condition=IfCondition(use_vision),
         launch_arguments={
             "detector": detector,
             "use_hik_camera": use_hik_camera,
@@ -274,6 +293,7 @@ def generate_launch_description():
 
     # Declare the launch options
     ld.add_action(declare_robot_name_cmd)
+    ld.add_action(declare_use_vision_cmd)
     ld.add_action(declare_detector_cmd)
     ld.add_action(declare_use_hik_camera_cmd)
     ld.add_action(declare_slam_cmd)
