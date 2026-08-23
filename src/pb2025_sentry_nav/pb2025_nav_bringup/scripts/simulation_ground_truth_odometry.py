@@ -20,6 +20,8 @@ class SimulationGroundTruthOdometry(Node):
     def __init__(self):
         super().__init__("simulation_ground_truth_odometry")
         self.initial_pose = None
+        self.zero_pose_since = None
+        self.zero_pose_grace_ns = 2_000_000_000
         self.last_publish_time = None
         self.publish_period_ns = 20_000_000  # 50 Hz is sufficient for Nav2.
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -36,13 +38,22 @@ class SimulationGroundTruthOdometry(Node):
             # robot entity is still being spawned. Do not use that placeholder
             # as the odometry origin, or the real spawn pose will appear
             # outside the Nav2 map.
-            if (
+            is_zero_pose = (
                 abs(pose.position.x) < 1e-6
                 and abs(pose.position.y) < 1e-6
                 and abs(pose.position.z) < 1e-6
                 and abs(yaw) < 1e-6
-            ):
-                return
+            )
+            if is_zero_pose:
+                now = self.get_clock().now()
+                if self.zero_pose_since is None:
+                    self.zero_pose_since = now.nanoseconds
+                # Some Gazebo versions emit zero odometry until the model's
+                # odometry plugin has settled. Give a real pose priority, but
+                # do not leave Nav2 without an odom TF forever when zero is
+                # the intended relative-odometry origin.
+                if now.nanoseconds - self.zero_pose_since < self.zero_pose_grace_ns:
+                    return
             self.initial_pose = (pose.position.x, pose.position.y, yaw)
             self.get_logger().info("Ground-truth odometry origin initialized")
 

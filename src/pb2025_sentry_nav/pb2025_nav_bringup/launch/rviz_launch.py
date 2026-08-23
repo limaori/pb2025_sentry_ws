@@ -31,6 +31,7 @@ def generate_launch_description():
     # Create the launch configuration variables
     namespace = LaunchConfiguration("namespace")
     rviz_config_file = LaunchConfiguration("rviz_config")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     # Declare the launch arguments
     declare_namespace_cmd = DeclareLaunchArgument(
@@ -48,6 +49,12 @@ def generate_launch_description():
         description="Full path to the RViz config file to use",
     )
 
+    declare_use_sim_time_cmd = DeclareLaunchArgument(
+        "use_sim_time",
+        default_value="False",
+        description="Use the Gazebo /clock when enabled",
+    )
+
     # Launch rviz
     start_rviz_cmd = Node(
         package="rviz2",
@@ -55,6 +62,7 @@ def generate_launch_description():
         namespace=namespace,
         arguments=["-d", rviz_config_file],
         output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
         remappings=[
             ("/tf", "tf"),
             ("/tf_static", "tf_static"),
@@ -74,6 +82,7 @@ def generate_launch_description():
     # Declare the launch options
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_rviz_config_file_cmd)
+    ld.add_action(declare_use_sim_time_cmd)
 
     # Add any conditioned actions
     ld.add_action(start_rviz_cmd)

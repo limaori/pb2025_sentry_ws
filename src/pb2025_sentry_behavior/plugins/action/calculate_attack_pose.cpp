@@ -148,6 +148,7 @@ bool CalculateAttackPoseAction::transformPoseInTargetFrame(
   const std::string target_frame, const double transform_timeout)
 {
   static rclcpp::Logger logger = rclcpp::get_logger("transformPoseInTargetFrame");
+  static rclcpp::Clock throttle_clock{RCL_STEADY_TIME};
 
   try {
     transformed_pose =
@@ -158,7 +159,25 @@ bool CalculateAttackPoseAction::transformPoseInTargetFrame(
   } catch (tf2::ConnectivityException & ex) {
     RCLCPP_ERROR(logger, "Connectivity Error looking up target frame: %s\n", ex.what());
   } catch (tf2::ExtrapolationException & ex) {
-    RCLCPP_ERROR(logger, "Extrapolation Error looking up target frame: %s\n", ex.what());
+    // A detector message can arrive with a timestamp older than the first TF
+    // sample after startup (for example when /clock has just begun).  Retrying
+    // with time zero asks tf2 for the latest transform and avoids repeatedly
+    // failing the behavior-tree tick on an otherwise usable target.
+    try {
+      auto latest_pose = input_pose;
+      latest_pose.header.stamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
+      transformed_pose = tf_buffer.transform(
+        latest_pose, target_frame, tf2::durationFromSec(transform_timeout));
+      RCLCPP_WARN_THROTTLE(
+        logger, throttle_clock, 5000,
+        "Target pose timestamp is outside the TF buffer; using the latest transform");
+      return true;
+    } catch (tf2::TransformException & latest_ex) {
+      RCLCPP_ERROR_THROTTLE(
+        logger, throttle_clock, 5000,
+        "Extrapolation Error looking up target frame: %s (latest transform also unavailable: %s)",
+        ex.what(), latest_ex.what());
+    }
   } catch (tf2::TimeoutException & ex) {
     RCLCPP_ERROR(logger, "Transform timeout with tolerance: %.4f", transform_timeout);
   } catch (tf2::TransformException & ex) {
