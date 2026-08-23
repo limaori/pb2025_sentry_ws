@@ -280,6 +280,10 @@ def generate_launch_description():
                 plugin="sensor_scan_generation::SensorScanGenerationNode",
                 name="sensor_scan_generation",
                 parameters=[configured_params],
+                # SimulationGroundTruthOdometry owns the navigation odometry
+                # topic. Keep this derived sensor odometry separate in the
+                # composed and non-composed launch paths.
+                remappings=[("odometry", "sensor_odometry")],
             ),
             ComposableNode(
                 package="fake_vel_transform",

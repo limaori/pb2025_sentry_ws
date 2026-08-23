@@ -32,10 +32,25 @@ class SimulationGroundTruthOdometry(Node):
         pose = message.pose.pose
         yaw = yaw_from_quaternion(pose.orientation)
         if self.initial_pose is None:
+            # Gazebo can publish one zero-valued odometry sample while the
+            # robot entity is still being spawned. Do not use that placeholder
+            # as the odometry origin, or the real spawn pose will appear
+            # outside the Nav2 map.
+            if (
+                abs(pose.position.x) < 1e-6
+                and abs(pose.position.y) < 1e-6
+                and abs(pose.position.z) < 1e-6
+                and abs(yaw) < 1e-6
+            ):
+                return
             self.initial_pose = (pose.position.x, pose.position.y, yaw)
             self.get_logger().info("Ground-truth odometry origin initialized")
 
-        stamp_ns = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+        # Use the node's ROS clock for every derived message.  Gazebo bridge
+        # messages can carry a stale source timestamp after /clock starts;
+        # forwarding it makes Nav2 request transforms from the distant past.
+        stamp = self.get_clock().now()
+        stamp_ns = stamp.nanoseconds
         if (
             self.last_publish_time is not None
             and stamp_ns - self.last_publish_time < self.publish_period_ns
@@ -53,7 +68,7 @@ class SimulationGroundTruthOdometry(Node):
         relative_yaw = yaw - initial_yaw
 
         transform = TransformStamped()
-        transform.header.stamp = message.header.stamp
+        transform.header.stamp = stamp.to_msg()
         transform.header.frame_id = "odom"
         transform.child_frame_id = "chassis"
         transform.transform.translation.x = x
