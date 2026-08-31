@@ -81,7 +81,7 @@ class SimulationGroundTruthOdometry(Node):
         transform = TransformStamped()
         transform.header.stamp = stamp.to_msg()
         transform.header.frame_id = "odom"
-        transform.child_frame_id = "chassis"
+        transform.child_frame_id = "base_footprint"
         transform.transform.translation.x = x
         transform.transform.translation.y = y
         transform.transform.rotation.z = math.sin(relative_yaw / 2.0)
@@ -90,7 +90,7 @@ class SimulationGroundTruthOdometry(Node):
 
         odometry = Odometry()
         odometry.header = transform.header
-        odometry.child_frame_id = "gimbal_yaw"
+        odometry.child_frame_id = transform.child_frame_id
         odometry.pose.pose.position.x = x
         odometry.pose.pose.position.y = y
         odometry.pose.pose.orientation = transform.transform.rotation
