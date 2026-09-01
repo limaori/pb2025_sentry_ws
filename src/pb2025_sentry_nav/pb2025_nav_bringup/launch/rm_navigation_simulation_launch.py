@@ -17,13 +17,36 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    SetLaunchConfiguration,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
 from nav2_common.launch import RewrittenYaml
+
+
+def _normalize_map_argument(context):
+    """Accept a map directory while passing map_server a YAML file."""
+    map_value = context.launch_configurations.get("map", "")
+    world_value = context.launch_configurations.get("world", "rmuc_2025")
+    if not map_value or not os.path.isdir(map_value):
+        return []
+
+    candidates = (
+        os.path.join(map_value, "map", "simulation", f"{world_value}.yaml"),
+        os.path.join(map_value, "simulation", f"{world_value}.yaml"),
+        os.path.join(map_value, f"{world_value}.yaml"),
+    )
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return [SetLaunchConfiguration("map", candidate)]
+    return []
 
 
 def generate_launch_description():
@@ -81,11 +104,13 @@ def generate_launch_description():
     declare_map_yaml_cmd = DeclareLaunchArgument(
         "map",
         default_value=[
-            TextSubstitution(text=os.path.join(bringup_dir, "map", "simulation", "")),
-            world,
-            TextSubstitution(text=".yaml"),
+            TextSubstitution(
+                text=os.path.join(
+                    bringup_dir, "map", "simulation", "rmuc_2025_tunnel.yaml"
+                )
+            )
         ],
-        description="Full path to map file to load",
+        description="Full path to the tunnel map YAML file to load",
     )
 
     declare_prior_pcd_file_cmd = DeclareLaunchArgument(
@@ -224,6 +249,9 @@ def generate_launch_description():
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)
+
+    # Normalize a directory supplied as `map:=...` before map_server is configured.
+    ld.add_action(OpaqueFunction(function=_normalize_map_argument))
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(start_velodyne_convert_tool)
