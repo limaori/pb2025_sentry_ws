@@ -81,6 +81,41 @@ use_rviz:=True
 
 ### 3.1 子模块
 
+LiDAR (Livox Mid-360)
+
+Mid-360 通过网口连接。电脑连接雷达的网卡需要配置为 `192.168.1.50/24`（不需要网关），雷达地址在
+`src/pb2025_sentry_nav/livox_ros_driver2/config/MID360_config.json` 的 `lidar_configs[].ip` 中配置。
+如果系统没有自动生成有线连接，可执行以下命令，其中 `<网卡名>` 用 `ip -br link` 查到的实际名称替换：
+
+```bash
+sudo nmcli con add type ethernet ifname <网卡名> con-name mid360 \
+  ipv4.method manual ipv4.addresses 192.168.1.50/24 \
+  ipv4.never-default yes ipv6.method disabled
+sudo nmcli con up mid360
+```
+
+确认雷达在线后，启动驱动和 RViz（同时发布 Point-LIO 所需的自定义消息与 RViz 所需的 PointCloud2）：
+
+```bash
+source install/setup.bash
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py
+```
+
+默认点云话题为 `/livox/lidar/pointcloud`，坐标系为 `front_mid360`。可用以下命令检查数据：
+
+```bash
+ros2 topic hz /livox/lidar/pointcloud
+ros2 topic hz /livox/imu
+```
+
+若雷达 IP 或 RViz 配置文件不同，可通过启动参数覆盖：
+
+```bash
+ros2 launch livox_ros_driver2 rviz_MID360_launch.py \
+  config_file:=/绝对路径/MID360_config.json \
+  rviz_config:=/绝对路径/display_point_cloud.rviz
+```
+
 Camera
 
 ```bash
