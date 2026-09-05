@@ -18,6 +18,8 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 
+#include <cmath>
+
 namespace ign_sim_pointcloud_tool
 {
 PointCloudConverter::PointCloudConverter(const rclcpp::NodeOptions & options)
@@ -28,12 +30,18 @@ PointCloudConverter::PointCloudConverter(const rclcpp::NodeOptions & options)
   this->declare_parameter<int>("horizon_scan", 1875);
   this->declare_parameter<float>("ang_bottom", 7.0);
   this->declare_parameter<float>("ang_res_y", 1.0);
+  this->declare_parameter<float>("min_range", 0.1);
+  // Keep the threshold just below the simulated sensor's 40 m limit so
+  // finite max-range returns are treated as no-return samples as well.
+  this->declare_parameter<float>("max_range", 39.9);
 
   pcd_topic_ = this->get_parameter("pcd_topic").as_string();
   n_scan_ = this->get_parameter("n_scan").as_int();
   horizon_scan_ = this->get_parameter("horizon_scan").as_int();
   ang_bottom_ = this->get_parameter("ang_bottom").as_double();
   ang_res_y_ = this->get_parameter("ang_res_y").as_double();
+  min_range_ = this->get_parameter("min_range").as_double();
+  max_range_ = this->get_parameter("max_range").as_double();
 
   pcd_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
     pcd_topic_, 10, std::bind(&PointCloudConverter::lidarHandle, this, std::placeholders::_1));
@@ -50,6 +58,7 @@ void PointCloudConverter::lidarHandle(const sensor_msgs::msg::PointCloud2::Share
   pcl::PointCloud<PointXYZIRT>::Ptr converted_pc(new pcl::PointCloud<PointXYZIRT>());
 
   pcl::fromROSMsg(*pc_msg, *original_pc);
+  converted_pc->points.reserve(original_pc->points.size());
 
   for (size_t point_id = 0; point_id < original_pc->points.size(); ++point_id) {
     PointXYZIRT new_point;
@@ -58,6 +67,15 @@ void PointCloudConverter::lidarHandle(const sensor_msgs::msg::PointCloud2::Share
     new_point.x = old_point.x;
     new_point.y = old_point.y;
     new_point.z = old_point.z;
+
+    const float range_sq =
+      new_point.x * new_point.x + new_point.y * new_point.y + new_point.z * new_point.z;
+    if (
+      !std::isfinite(range_sq) || range_sq < min_range_ * min_range_ ||
+      range_sq >= max_range_ * max_range_) {
+      continue;
+    }
+
     new_point.intensity = 0;
 
     float vertical_angle =
@@ -83,7 +101,7 @@ template <typename T>
 void PointCloudConverter::publishPoints(
   const typename pcl::PointCloud<T>::Ptr & new_pc, const sensor_msgs::msg::PointCloud2 & old_msg)
 {
-  new_pc->is_dense = false;
+  new_pc->is_dense = true;
 
   sensor_msgs::msg::PointCloud2 pc_new_msg;
   pcl::toROSMsg(*new_pc, pc_new_msg);

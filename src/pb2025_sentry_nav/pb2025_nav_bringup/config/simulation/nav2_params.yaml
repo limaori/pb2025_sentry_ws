@@ -5,6 +5,8 @@ ign_sim_pointcloud_tool:
     horizon_scan: 1875                             # 每条扫描线的水平采样点数
     ang_bottom: 7.0                                # 雷达垂直视场的底部角度（度）
     ang_res_y: 1.84375  # (7+52) / 32              # 垂直方向相邻扫描线的角分辨率（度）
+    min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
+    max_range: 39.9                                # 丢弃40米无回波量程点（米）
 
 point_lio:
   ros__parameters:

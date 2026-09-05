@@ -22,3 +22,5 @@ sentry_*/
 调试日志.md
 .idea/
 
+*.log
+/log_diag/
