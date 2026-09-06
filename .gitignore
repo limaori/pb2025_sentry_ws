@@ -17,7 +17,6 @@ __pycache__
 /*.pdf
 
 symlink
-script/*.sh
 sentry_*/
 调试日志.md
 .idea/

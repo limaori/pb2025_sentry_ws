@@ -74,11 +74,12 @@
 				<pose>0 0 0.03 0 0 0</pose>
 				<always_on>true</always_on>
 				<visualize>true</visualize>
-				<update_rate>10.0</update_rate>
+				<!-- Match the 20 Hz / 1875-column Mid-360 profile used by Point-LIO. -->
+				<update_rate>20.0</update_rate>
 				<ray>
 					<scan>
 						<horizontal>
-							<samples>1500.0</samples>
+							<samples>1875.0</samples>
 							<resolution>1.0</resolution>
 							<min_angle>0</min_angle>
 							<max_angle>6.2831852</max_angle>
@@ -91,7 +92,7 @@
 					</scan>
 					<range>
 						<min>0.15</min>
-						<max>15.0</max>
+						<max>40.0</max>
 					</range>
 				</ray>
 				<noise>
@@ -103,4 +104,3 @@
 		</link>
 	</model>
 </sdf>
-

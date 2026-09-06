@@ -30,6 +30,8 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory("pb2025_nav_bringup")
 
     namespace = LaunchConfiguration("namespace")
+    slam = LaunchConfiguration("slam")
+    use_pcd_localization = LaunchConfiguration("use_pcd_localization")
     use_sim_time = LaunchConfiguration("use_sim_time")
     autostart = LaunchConfiguration("autostart")
     params_file = LaunchConfiguration("params_file")
@@ -70,6 +72,14 @@ def generate_launch_description():
 
     declare_namespace_cmd = DeclareLaunchArgument(
         "namespace", default_value="", description="Top-level namespace"
+    )
+
+    declare_slam_cmd = DeclareLaunchArgument(
+        "slam", default_value="False", description="Whether Point-LIO provides navigation odometry"
+    )
+    declare_use_pcd_localization_cmd = DeclareLaunchArgument(
+        "use_pcd_localization", default_value="False",
+        description="Whether prior-PCD Point-LIO localization provides navigation odometry",
     )
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
@@ -157,9 +167,15 @@ def generate_launch_description():
                 respawn=use_respawn,
                 respawn_delay=2.0,
                 parameters=[configured_params],
-                # SimulationGroundTruthOdometry owns the navigation odometry
-                # topic in simulation; keep this derived scan odometry separate.
-                remappings=[("odometry", "sensor_odometry")],
+                # Use the Point-LIO odometry topic when SLAM/PCD localization is active;
+                # otherwise keep the derived scan odometry separate from ground truth.
+                remappings=[(
+                    "odometry",
+                    PythonExpression([
+                        "'odometry' if (", slam, " or ", use_pcd_localization,
+                        ") else 'sensor_odometry'",
+                    ]),
+                )],
                 arguments=["--ros-args", "--log-level", log_level],
             ),
             Node(
@@ -280,10 +296,15 @@ def generate_launch_description():
                 plugin="sensor_scan_generation::SensorScanGenerationNode",
                 name="sensor_scan_generation",
                 parameters=[configured_params],
-                # SimulationGroundTruthOdometry owns the navigation odometry
-                # topic. Keep this derived sensor odometry separate in the
-                # composed and non-composed launch paths.
-                remappings=[("odometry", "sensor_odometry")],
+                # Keep the composed path consistent with the non-composed path:
+                # Point-LIO owns odometry for SLAM/PCD localization.
+                remappings=[(
+                    "odometry",
+                    PythonExpression([
+                        "'odometry' if (", slam, " or ", use_pcd_localization,
+                        ") else 'sensor_odometry'",
+                    ]),
+                )],
             ),
             ComposableNode(
                 package="fake_vel_transform",
@@ -365,6 +386,8 @@ def generate_launch_description():
 
     # Declare the launch options
     ld.add_action(declare_namespace_cmd)
+    ld.add_action(declare_slam_cmd)
+    ld.add_action(declare_use_pcd_localization_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)

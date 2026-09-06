@@ -34,6 +34,7 @@ PointCloudConverter::PointCloudConverter(const rclcpp::NodeOptions & options)
   // Keep the threshold just below the simulated sensor's 40 m limit so
   // finite max-range returns are treated as no-return samples as well.
   this->declare_parameter<float>("max_range", 39.9);
+  this->declare_parameter<double>("scan_period", 0.1);
 
   pcd_topic_ = this->get_parameter("pcd_topic").as_string();
   n_scan_ = this->get_parameter("n_scan").as_int();
@@ -42,6 +43,7 @@ PointCloudConverter::PointCloudConverter(const rclcpp::NodeOptions & options)
   ang_res_y_ = this->get_parameter("ang_res_y").as_double();
   min_range_ = this->get_parameter("min_range").as_double();
   max_range_ = this->get_parameter("max_range").as_double();
+  scan_period_ = this->get_parameter("scan_period").as_double();
 
   pcd_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
     pcd_topic_, 10, std::bind(&PointCloudConverter::lidarHandle, this, std::placeholders::_1));
@@ -89,7 +91,7 @@ void PointCloudConverter::lidarHandle(const sensor_msgs::msg::PointCloud2::Share
       continue;
     }
 
-    new_point.time = (point_id % horizon_scan_) * 0.1f / horizon_scan_;
+    new_point.time = (point_id % horizon_scan_) * static_cast<float>(scan_period_) / horizon_scan_;
 
     converted_pc->points.push_back(new_point);
   }

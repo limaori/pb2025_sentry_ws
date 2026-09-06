@@ -7,6 +7,7 @@ ign_sim_pointcloud_tool:
     ang_res_y: 1.84375  # (7+52) / 32              # 垂直方向相邻扫描线的角分辨率（度）
     min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
     max_range: 39.9                                # 丢弃40米无回波量程点（米）
+    scan_period: 0.05                              # 20 Hz仿真雷达的一帧扫描周期（秒）
 
 point_lio:
   ros__parameters:
@@ -39,6 +40,7 @@ point_lio:
     preprocess:
       lidar_type: 2                                     # 激光雷达类型：1 Livox，2 Velodyne，3 Ouster
       scan_line: 32                                     # 激光雷达扫描线数
+      scan_rate: 20                                     # 仿真雷达扫描频率（Hz）
       timestamp_unit: 0                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
       blind: 0.5                                        # 忽略雷达近距离盲区半径（米）
 
@@ -46,7 +48,7 @@ point_lio:
       imu_en: True                                      # 是否启用IMU融合
       extrinsic_est_en: False                           # 是否在线估计雷达与IMU外参
       imu_time_inte: 0.005                              # IMU采样周期（秒）
-      lidar_time_inte: 0.1                              # 激光雷达采样周期（秒）
+      lidar_time_inte: 0.05                             # 20 Hz激光雷达采样周期（秒）
       satu_acc: 30.0                                    # IMU加速度饱和值
       satu_gyro: 35.0                                   # IMU角速度饱和值
       acc_norm: 9.81                                    # 重力加速度模长（米/秒²）
@@ -70,7 +72,7 @@ point_lio:
                      0.0, 0.0, 1.0 ]
 
     odometry:
-      publish_odometry_without_downsample: True         # 是否发布未下采样的里程计
+      publish_odometry_without_downsample: False        # 每帧发布一次，避免高频里程计挤占点云同步队列
 
     publish:
       path_en: False                                    # 是否发布LIO轨迹
@@ -97,7 +99,7 @@ sensor_scan_generation:
     lidar_frame: "front_mid360"                         # 输入雷达坐标系
     base_frame: "base_footprint"                        # 底盘坐标系
     robot_base_frame: "gimbal_yaw"                      # 机器人运动参考坐标系
-    publish_tf: False                                    # 真值里程计负责发布 odom -> base_footprint
+    publish_tf: True                                     # 发布二维 odom -> base_footprint TF 供Nav2使用
 
 terrain_analysis:
   ros__parameters:

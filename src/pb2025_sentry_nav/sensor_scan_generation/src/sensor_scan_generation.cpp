@@ -15,10 +15,30 @@
 #include "sensor_scan_generation/sensor_scan_generation.hpp"
 
 #include "pcl_ros/transforms.hpp"
+#include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace sensor_scan_generation
 {
+
+namespace
+{
+
+// Nav2's base_footprint is a planar frame.  Point-LIO estimates a full 6DoF
+// pose for the tilted lidar, but passing its z/roll/pitch noise to the planar
+// robot frame makes the robot model bob relative to a 2D map.
+tf2::Transform planarize(const tf2::Transform & transform)
+{
+  tf2::Transform planar = tf2::Transform::getIdentity();
+  const auto & origin = transform.getOrigin();
+  planar.setOrigin(tf2::Vector3(origin.x(), origin.y(), 0.0));
+  tf2::Quaternion rotation;
+  rotation.setRPY(0.0, 0.0, tf2::getYaw(transform.getRotation()));
+  planar.setRotation(rotation);
+  return planar;
+}
+
+}  // namespace
 
 SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & options)
 : Node("sensor_scan_generation", options)
@@ -79,10 +99,12 @@ void SensorScanGenerationNode::laserCloudAndOdometryHandler(
 
   if (publish_tf_) {
     publishTransform(
-      tf_odom_to_chassis, odometry_msg->header.frame_id, base_frame_, pcd_msg->header.stamp);
+      planarize(tf_odom_to_chassis), odometry_msg->header.frame_id, base_frame_,
+      pcd_msg->header.stamp);
   }
   publishOdometry(
-    tf_odom_to_robot_base, odometry_msg->header.frame_id, robot_base_frame_, pcd_msg->header.stamp);
+    planarize(tf_odom_to_robot_base), odometry_msg->header.frame_id, robot_base_frame_,
+    pcd_msg->header.stamp);
 
   sensor_msgs::msg::PointCloud2 out;
   pcl_ros::transformPointCloud(lidar_frame_, tf_odom_to_lidar.inverse(), *pcd_msg, out);
@@ -99,8 +121,28 @@ tf2::Transform SensorScanGenerationNode::getTransform(
     tf2::fromMsg(transform_stamped.transform, transform);
     return transform;
   } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN(this->get_logger(), "TF lookup failed: %s. Returning identity.", ex.what());
-    return tf2::Transform::getIdentity();
+    // Gazebo publishes sensor messages slightly ahead of robot_state_publisher.
+    // A lookup at the exact cloud timestamp can therefore fail with a future
+    // extrapolation even though a valid latest transform is available.  Falling
+    // back to the latest transform avoids publishing a frame with an identity
+    // transform, which makes the point cloud jump/fly in RViz.
+    try {
+      auto transform_stamped = tf_buffer_->lookupTransform(
+        target_frame, source_frame, tf2::TimePointZero, tf2::durationFromSec(0.5));
+      tf2::Transform transform;
+      tf2::fromMsg(transform_stamped.transform, transform);
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "TF at %.3f unavailable (%s); using latest transform for %s <- %s", time.seconds(),
+        ex.what(), target_frame.c_str(), source_frame.c_str());
+      return transform;
+    } catch (tf2::TransformException & latest_ex) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "TF lookup failed for %s <- %s (%s); latest lookup also failed (%s). Returning identity.",
+        target_frame.c_str(), source_frame.c_str(), ex.what(), latest_ex.what());
+      return tf2::Transform::getIdentity();
+    }
   }
 }
 

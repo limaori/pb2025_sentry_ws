@@ -138,6 +138,7 @@ def generate_launch_description():
         respawn_delay=2.0,
         parameters=[
             configured_params,
+            {"use_sim_time": use_sim_time},
             {"prior_pcd.enable": use_pcd_localization},
             {"prior_pcd.prior_pcd_map_path": prior_pcd_file},
         ],
