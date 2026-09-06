@@ -26,10 +26,12 @@ SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & o
   this->declare_parameter<std::string>("lidar_frame", "");
   this->declare_parameter<std::string>("base_frame", "");
   this->declare_parameter<std::string>("robot_base_frame", "");
+  this->declare_parameter<bool>("publish_tf", true);
 
   this->get_parameter("lidar_frame", lidar_frame_);
   this->get_parameter("base_frame", base_frame_);
   this->get_parameter("robot_base_frame", robot_base_frame_);
+  this->get_parameter("publish_tf", publish_tf_);
 
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
@@ -54,10 +56,9 @@ SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & o
 
   sync_ = std::make_unique<message_filters::Synchronizer<SyncPolicy>>(
     SyncPolicy(100), odometry_sub_, laser_cloud_sub_);
-  sync_->registerCallback(
-    std::bind(
-      &SensorScanGenerationNode::laserCloudAndOdometryHandler, this, std::placeholders::_1,
-      std::placeholders::_2));
+  sync_->registerCallback(std::bind(
+    &SensorScanGenerationNode::laserCloudAndOdometryHandler, this, std::placeholders::_1,
+    std::placeholders::_2));
 }
 
 void SensorScanGenerationNode::laserCloudAndOdometryHandler(
@@ -76,8 +77,10 @@ void SensorScanGenerationNode::laserCloudAndOdometryHandler(
   tf_odom_to_chassis = tf_odom_to_lidar * tf_lidar_to_chassis;
   tf_odom_to_robot_base = tf_odom_to_lidar * tf_lidar_to_robot_base_;
 
-  publishTransform(
-    tf_odom_to_chassis, odometry_msg->header.frame_id, base_frame_, pcd_msg->header.stamp);
+  if (publish_tf_) {
+    publishTransform(
+      tf_odom_to_chassis, odometry_msg->header.frame_id, base_frame_, pcd_msg->header.stamp);
+  }
   publishOdometry(
     tf_odom_to_robot_base, odometry_msg->header.frame_id, robot_base_frame_, pcd_msg->header.stamp);
 

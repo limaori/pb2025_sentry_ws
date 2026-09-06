@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 
+# Copyright 2026 Shiyu
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
+import time
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
@@ -45,14 +60,21 @@ class SimulationGroundTruthOdometry(Node):
                 and abs(yaw) < 1e-6
             )
             if is_zero_pose:
-                now = self.get_clock().now()
+                # A paused Gazebo world can repeatedly publish the placeholder
+                # pose while /clock is still zero.  Never initialize from it:
+                # the first real pose after unpausing may be the configured
+                # spawn pose, far away from the world origin.
+                if self.get_clock().now().nanoseconds == 0:
+                    self.zero_pose_since = None
+                    return
+                now_ns = time.monotonic_ns()
                 if self.zero_pose_since is None:
-                    self.zero_pose_since = now.nanoseconds
+                    self.zero_pose_since = now_ns
                 # Some Gazebo versions emit zero odometry until the model's
                 # odometry plugin has settled. Give a real pose priority, but
                 # do not leave Nav2 without an odom TF forever when zero is
                 # the intended relative-odometry origin.
-                if now.nanoseconds - self.zero_pose_since < self.zero_pose_grace_ns:
+                if now_ns - self.zero_pose_since < self.zero_pose_grace_ns:
                     return
             self.initial_pose = (pose.position.x, pose.position.y, yaw)
             self.get_logger().info("Ground-truth odometry origin initialized")
@@ -61,13 +83,13 @@ class SimulationGroundTruthOdometry(Node):
         # messages can carry a stale source timestamp after /clock starts;
         # forwarding it makes Nav2 request transforms from the distant past.
         stamp = self.get_clock().now()
-        stamp_ns = stamp.nanoseconds
+        publish_time_ns = time.monotonic_ns()
         if (
             self.last_publish_time is not None
-            and stamp_ns - self.last_publish_time < self.publish_period_ns
+            and publish_time_ns - self.last_publish_time < self.publish_period_ns
         ):
             return
-        self.last_publish_time = stamp_ns
+        self.last_publish_time = publish_time_ns
 
         initial_x, initial_y, initial_yaw = self.initial_pose
         world_dx = pose.position.x - initial_x
@@ -103,9 +125,11 @@ def main(args=None):
     node = SimulationGroundTruthOdometry()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

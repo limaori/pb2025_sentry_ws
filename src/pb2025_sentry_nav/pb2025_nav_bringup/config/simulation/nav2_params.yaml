@@ -39,7 +39,7 @@ point_lio:
     preprocess:
       lidar_type: 2                                     # 激光雷达类型：1 Livox，2 Velodyne，3 Ouster
       scan_line: 32                                     # 激光雷达扫描线数
-      timestamp_unit: 2                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
+      timestamp_unit: 0                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
       blind: 0.5                                        # 忽略雷达近距离盲区半径（米）
 
     mapping:
@@ -97,6 +97,7 @@ sensor_scan_generation:
     lidar_frame: "front_mid360"                         # 输入雷达坐标系
     base_frame: "base_footprint"                        # 底盘坐标系
     robot_base_frame: "gimbal_yaw"                      # 机器人运动参考坐标系
+    publish_tf: False                                    # 真值里程计负责发布 odom -> base_footprint
 
 terrain_analysis:
   ros__parameters:
