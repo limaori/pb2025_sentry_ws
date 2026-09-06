@@ -45,13 +45,41 @@ open_term() {
   fi
 }
 
+# 检查命令是否已经在运行。
+# 使用带方括号的正则，避免 pgrep 把自身的匹配命令算进去。
+process_running() {
+  pgrep -af "$1" >/dev/null 2>&1
+}
+
+start_once() {
+  local title="$1"
+  local process_pattern="$2"
+  local cmd="$3"
+
+  if process_running "$process_pattern"; then
+    echo "[跳过] 已检测到正在运行的进程: ${title}"
+    return 0
+  fi
+
+  open_term "$title" "$cmd"
+}
+
 echo "[1/3] 启动 Gazebo 仿真..."
-open_term "Gazebo 仿真" "ros2 launch rmu_gazebo_simulator bringup_sim.launch.py"
+start_once \
+  "Gazebo 仿真" \
+  '[r]os2 launch rmu_gazebo_simulator bringup_sim.launch.py|[i]gn gazebo|[g]z sim' \
+  "ros2 launch rmu_gazebo_simulator bringup_sim.launch.py"
 
 echo "[2/3] 启动 RViz 导航..."
-open_term "RViz 导航" "ros2 launch pb2025_nav_bringup rm_navigation_simulation_launch.py world:=rmuc_2025 slam:=True use_sim_time:=True use_rviz:=True"
+start_once \
+  "RViz 导航" \
+  '[r]os2 launch pb2025_nav_bringup rm_navigation_simulation_launch.py' \
+  "ros2 launch pb2025_nav_bringup rm_navigation_simulation_launch.py world:=rmuc_2025 slam:=True use_sim_time:=True use_rviz:=True"
 
 echo "[3/3] 启动键鼠控制..."
-open_term "键鼠控制" "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.5 -p w:=0.5"
+start_once \
+  "键鼠控制" \
+  '[r]os2 run rmoss_gz_base test_chassis_cmd.py' \
+  "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.5 -p w:=0.5"
 
-echo "已在 ${OPEN_MODE} 模式下启动 3 个终端: Gazebo / RViz / 键鼠控制"
+echo "启动流程处理完成（终端模式: ${OPEN_MODE}）。"
