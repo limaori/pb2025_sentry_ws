@@ -50,6 +50,7 @@ private:
   std::string odom_frame_;
   std::string lidar_frame_;
   std::string base_frame_;
+  bool planarize_pose_;
 
   bool base_frame_to_lidar_initialized_;
   tf2::Transform tf_odom_to_lidar_odom_;

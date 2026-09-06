@@ -192,7 +192,10 @@ def generate_launch_description():
         name="simulation_ground_truth_odometry",
         output="screen",
         namespace=namespace,
-        parameters=[{"use_sim_time": use_sim_time}],
+        # The bridge already timestamps odometry in Gazebo simulation time.
+        # Keep this lightweight adapter off the high-rate /clock subscription;
+        # it forwards the source stamp directly below.
+        parameters=[{"use_sim_time": False}],
         remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
     )
 

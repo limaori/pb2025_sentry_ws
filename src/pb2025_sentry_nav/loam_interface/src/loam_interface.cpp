@@ -14,11 +14,30 @@
 
 #include "loam_interface/loam_interface.hpp"
 
+#include <cmath>
+
 #include "pcl_ros/transforms.hpp"
+#include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace loam_interface
 {
+
+namespace
+{
+
+tf2::Transform planarizeBasePose(const tf2::Transform & transform)
+{
+  tf2::Transform planar = tf2::Transform::getIdentity();
+  const auto & origin = transform.getOrigin();
+  planar.setOrigin(tf2::Vector3(origin.x(), origin.y(), 0.0));
+  tf2::Quaternion rotation;
+  rotation.setRPY(0.0, 0.0, tf2::getYaw(transform.getRotation()));
+  planar.setRotation(rotation);
+  return planar;
+}
+
+}  // namespace
 
 LoamInterfaceNode::LoamInterfaceNode(const rclcpp::NodeOptions & options)
 : Node("loam_interface", options)
@@ -28,12 +47,14 @@ LoamInterfaceNode::LoamInterfaceNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<std::string>("base_frame", "");
   this->declare_parameter<std::string>("lidar_frame", "");
+  this->declare_parameter<bool>("planarize_pose", false);
 
   this->get_parameter("state_estimation_topic", state_estimation_topic_);
   this->get_parameter("registered_scan_topic", registered_scan_topic_);
   this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("base_frame", base_frame_);
   this->get_parameter("lidar_frame", lidar_frame_);
+  this->get_parameter("planarize_pose", planarize_pose_);
 
   base_frame_to_lidar_initialized_ = false;
 
@@ -53,8 +74,12 @@ LoamInterfaceNode::LoamInterfaceNode(const rclcpp::NodeOptions & options)
 
 void LoamInterfaceNode::pointCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
-  // NOTE: Input point cloud message is based on the `lidar_odom`
-  // Here we transform it to the REAL `odom` frame
+  // Point-LIO has already transformed cloud_registered from the lidar into
+  // its camera_init world frame. Only align that fixed world frame with odom;
+  // applying the current lidar pose again would double the robot motion.
+  if (!base_frame_to_lidar_initialized_) {
+    return;
+  }
   auto out = std::make_shared<sensor_msgs::msg::PointCloud2>();
   pcl_ros::transformPointCloud(odom_frame_, tf_odom_to_lidar_odom_, *msg, *out);
   pcd_pub_->publish(*out);
@@ -83,6 +108,12 @@ void LoamInterfaceNode::odometryCallback(const nav_msgs::msg::Odometry::ConstSha
   tf2::fromMsg(msg->pose.pose, tf_lidar_odom_to_lidar);
   tf2::Transform tf_odom_to_lidar = tf_odom_to_lidar_odom_ * tf_lidar_odom_to_lidar;
 
+  // In 2D simulation, reject Point-LIO's unobservable z/roll/pitch drift while
+  // preserving the physical lidar mounting angle in the reconstructed pose.
+  if (planarize_pose_) {
+    const tf2::Transform tf_odom_to_base = tf_odom_to_lidar * tf_odom_to_lidar_odom_.inverse();
+    tf_odom_to_lidar = planarizeBasePose(tf_odom_to_base) * tf_odom_to_lidar_odom_;
+  }
   nav_msgs::msg::Odometry out;
   out.header.stamp = msg->header.stamp;
   out.header.frame_id = odom_frame_;

@@ -133,6 +133,13 @@ def generate_launch_description():
         respawn_delay=2.0,
         arguments=["--ros-args", "--log-level", log_level],
         parameters=[configured_params],
+        remappings=[(
+            "registered_scan",
+            PythonExpression([
+                "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                ") else 'registered_scan'",
+            ]),
+        )],
     )
 
     start_terrain_analysis_ext_cmd = Node(
@@ -144,12 +151,20 @@ def generate_launch_description():
         respawn_delay=2.0,
         arguments=["--ros-args", "--log-level", log_level],
         parameters=[configured_params],
+        remappings=[(
+            "registered_scan",
+            PythonExpression([
+                "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                ") else 'registered_scan'",
+            ]),
+        )],
     )
 
     load_nodes = GroupAction(
         condition=IfCondition(PythonExpression(["not ", use_composition])),
         actions=[
             Node(
+                condition=IfCondition(PythonExpression([slam, " or ", use_pcd_localization])),
                 package="loam_interface",
                 executable="loam_interface_node",
                 name="loam_interface",
@@ -166,7 +181,16 @@ def generate_launch_description():
                 output="screen",
                 respawn=use_respawn,
                 respawn_delay=2.0,
-                parameters=[configured_params],
+                arguments=["--ros-args", "--log-level", log_level],
+                # In pure simulation odometry mode, Gazebo ground truth owns
+                # odom->base_footprint.  Avoid a second broadcaster racing it;
+                # retain this publisher for Point-LIO/PCD localization modes.
+                parameters=[configured_params, {
+                    "publish_tf": PythonExpression([
+                        "'true' if (", slam, " or ", use_pcd_localization,
+                        ") else 'false'",
+                    ])
+                }],
                 # Use the Point-LIO odometry topic when SLAM/PCD localization is active;
                 # otherwise keep the derived scan odometry separate from ground truth.
                 remappings=[(
@@ -175,8 +199,10 @@ def generate_launch_description():
                         "'odometry' if (", slam, " or ", use_pcd_localization,
                         ") else 'sensor_odometry'",
                     ]),
-                )],
-                arguments=["--ros-args", "--log-level", log_level],
+                ), ("registered_scan", PythonExpression([
+                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                    ") else 'registered_scan'",
+                ]))],
             ),
             Node(
                 package="fake_vel_transform",
@@ -286,16 +312,15 @@ def generate_launch_description():
         target_container=container_name_full,
         composable_node_descriptions=[
             ComposableNode(
-                package="loam_interface",
-                plugin="loam_interface::LoamInterfaceNode",
-                name="loam_interface",
-                parameters=[configured_params],
-            ),
-            ComposableNode(
                 package="sensor_scan_generation",
                 plugin="sensor_scan_generation::SensorScanGenerationNode",
                 name="sensor_scan_generation",
-                parameters=[configured_params],
+                parameters=[configured_params, {
+                    "publish_tf": PythonExpression([
+                        "'true' if (", slam, " or ", use_pcd_localization,
+                        ") else 'false'",
+                    ])
+                }],
                 # Keep the composed path consistent with the non-composed path:
                 # Point-LIO owns odometry for SLAM/PCD localization.
                 remappings=[(
@@ -304,7 +329,10 @@ def generate_launch_description():
                         "'odometry' if (", slam, " or ", use_pcd_localization,
                         ") else 'sensor_odometry'",
                     ]),
-                )],
+                ), ("registered_scan", PythonExpression([
+                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                    ") else 'registered_scan'",
+                ]))],
             ),
             ComposableNode(
                 package="fake_vel_transform",
@@ -377,6 +405,21 @@ def generate_launch_description():
         ],
     )
 
+    load_loam_interface_component = LoadComposableNodes(
+        condition=IfCondition(PythonExpression([
+            use_composition, " and (", slam, " or ", use_pcd_localization, ")",
+        ])),
+        target_container=container_name_full,
+        composable_node_descriptions=[
+            ComposableNode(
+                package="loam_interface",
+                plugin="loam_interface::LoamInterfaceNode",
+                name="loam_interface",
+                parameters=[configured_params],
+            )
+        ],
+    )
+
     # Create the launch description and populate
     ld = LaunchDescription()
 
@@ -400,5 +443,6 @@ def generate_launch_description():
     ld.add_action(start_terrain_analysis_ext_cmd)
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)
+    ld.add_action(load_loam_interface_component)
 
     return ld

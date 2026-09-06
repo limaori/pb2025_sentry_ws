@@ -221,7 +221,8 @@ slam_toolbox:
     debug_logging: false
     throttle_scans: 1
     scan_queue_size: 10
-    transform_publish_period: 0.0                # if 0 never publishes odometry
+    # slam_toolbox publishes map->odom; do not pair this with a static TF.
+    transform_publish_period: 0.02
     map_update_interval: 0.5
     resolution: 0.05
     min_laser_range: 0.3                         # for rastering images
@@ -233,7 +234,7 @@ slam_toolbox:
     enable_interactive_mode: true
 
     # General Parameters
-    use_scan_matching: false
+    use_scan_matching: true
     use_scan_barycenter: true
     minimum_travel_distance: 0.1
     minimum_travel_heading: 0.1

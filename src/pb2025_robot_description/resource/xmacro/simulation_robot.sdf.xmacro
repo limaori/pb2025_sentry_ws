@@ -45,6 +45,7 @@
 
         <!--plugin for chassis control-->
         <plugin filename="MecanumDrive2" name="ignition::gazebo::systems::MecanumDrive2">
+            <odom_publish_frequency>50</odom_publish_frequency>
             <chassis_link>chassis</chassis_link>
             <front_left_joint>front_left_wheel_joint</front_left_joint>
             <front_right_joint>front_right_wheel_joint</front_right_joint>

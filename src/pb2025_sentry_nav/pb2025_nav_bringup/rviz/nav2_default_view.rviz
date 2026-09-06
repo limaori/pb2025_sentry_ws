@@ -311,7 +311,9 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
       Color Transformer: FlatColor
-      Decay Time: 30
+      # Keep only the current scan. A long decay overlays scans from previous
+      # robot poses and makes the cloud look like a tilted fan in RViz.
+      Decay Time: 0
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
