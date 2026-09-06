@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================
-# 一键启动仿真流程：Gazebo 仿真 + RViz 导航 + 键鼠控制
+# 一键启动导航仿真：Gazebo 仿真 + RViz 导航
 #
 # 用法:
-#   ./script/start_slam.sh
+#   ./script/start_nav.sh
 #   或
-#   PB2025_WS_DIR=/path/to/ws ./script/start_slam.sh
+#   PB2025_WS_DIR=/path/to/ws ./script/start_nav.sh
 #
 # 说明:
-#   - 默认在同一个窗口里打开 3 个标签页（Gazebo / RViz / 键鼠控制）。
+#   - 默认在同一个窗口里打开 2 个标签页（Gazebo / RViz）。
 #   - 若想换成每个命令一个独立窗口, 执行时加环境变量 OPEN_MODE=window 即可。
 #   - 每个命令都会先 source 工作空间的 install/setup.bash。
 # =============================================================
@@ -45,13 +45,10 @@ open_term() {
   fi
 }
 
-echo "[1/3] 启动 Gazebo 仿真..."
+echo "[1/2] 启动 Gazebo 仿真..."
 open_term "Gazebo 仿真" "ros2 launch rmu_gazebo_simulator bringup_sim.launch.py"
 
-echo "[2/3] 启动 RViz 导航..."
-open_term "RViz 导航" "ros2 launch pb2025_nav_bringup rm_navigation_simulation_launch.py world:=rmuc_2025 slam:=True use_sim_time:=True use_rviz:=True"
+echo "[2/2] 启动 RViz 导航..."
+open_term "RViz 导航" "ros2 launch pb2025_nav_bringup rm_navigation_simulation_launch.py world:=rmuc_2025 slam:=False use_pcd_localization:=False use_composition:=False use_sim_time:=True use_rviz:=True"
 
-echo "[3/3] 启动键鼠控制..."
-open_term "键鼠控制" "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.5 -p w:=0.5"
-
-echo "已在 ${OPEN_MODE} 模式下启动 3 个终端: Gazebo / RViz / 键鼠控制"
+echo "已在 ${OPEN_MODE} 模式下启动 2 个终端: Gazebo / RViz"
