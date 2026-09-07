@@ -80,8 +80,21 @@ void LoamInterfaceNode::pointCloudCallback(const sensor_msgs::msg::PointCloud2::
   if (!base_frame_to_lidar_initialized_) {
     return;
   }
+  // The registered cloud is expressed in Point-LIO's `camera_init` world frame.
+  // Project it through the SAME planar odom->lidar pose used for
+  // odom -> base_footprint, instead of the static lidar extrinsic, so the map
+  // does not keep Point-LIO's unobservable z/roll/pitch drift.  Using the
+  // full (non-planar) pose here is what previously left the map tilted/flying
+  // while the base footprint was planarized.
+  tf2::Transform tf_odom_to_camera_init = tf_odom_to_lidar_odom_;
+  if (planarize_pose_ && planar_pose_available_) {
+    // p_odom = T_odom<-camera_init * p_camera_init
+    //        = T_odom<-lidar(planar) * inverse(T_camera_init<-lidar)
+    tf_odom_to_camera_init =
+      tf_odom_to_lidar_planar_ * tf_camera_init_to_lidar_.inverse();
+  }
   auto out = std::make_shared<sensor_msgs::msg::PointCloud2>();
-  pcl_ros::transformPointCloud(odom_frame_, tf_odom_to_lidar_odom_, *msg, *out);
+  pcl_ros::transformPointCloud(odom_frame_, tf_odom_to_camera_init, *msg, *out);
   pcd_pub_->publish(*out);
 }
 
@@ -114,6 +127,13 @@ void LoamInterfaceNode::odometryCallback(const nav_msgs::msg::Odometry::ConstSha
     const tf2::Transform tf_odom_to_base = tf_odom_to_lidar * tf_odom_to_lidar_odom_.inverse();
     tf_odom_to_lidar = planarizeBasePose(tf_odom_to_base) * tf_odom_to_lidar_odom_;
   }
+
+  // Cache the latest Point-LIO state so the registered cloud can be projected
+  // through the same planar pose (see pointCloudCallback).
+  tf_camera_init_to_lidar_ = tf_lidar_odom_to_lidar;
+  tf_odom_to_lidar_planar_ = tf_odom_to_lidar;
+  planar_pose_available_ = true;
+
   nav_msgs::msg::Odometry out;
   out.header.stamp = msg->header.stamp;
   out.header.frame_id = odom_frame_;

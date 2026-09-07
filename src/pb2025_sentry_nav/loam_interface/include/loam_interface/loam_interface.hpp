@@ -54,6 +54,14 @@ private:
 
   bool base_frame_to_lidar_initialized_;
   tf2::Transform tf_odom_to_lidar_odom_;
+
+  // Latest Point-LIO state, reused for the registered cloud so the map shares
+  // the SAME planar pose that drives odom -> base_footprint.  Without this the
+  // cloud keeps Point-LIO's unobservable z/roll/pitch drift (visible as a
+  // tilted/flying map), while the base footprint is planarized.
+  tf2::Transform tf_camera_init_to_lidar_;
+  tf2::Transform tf_odom_to_lidar_planar_;
+  bool planar_pose_available_ = false;
 };
 
 }  // namespace loam_interface
