@@ -172,15 +172,27 @@ void SmallGicpRelocalizationNode::performRegistration()
   auto result = register_->align(*target_, *source_, *target_tree_, previous_result_t_);
 
   if (result.converged) {
-    result_t_ = previous_result_t_ = result.T_target_source;
-    // 2D 重定位: 把 GICP 结果压平(z=0, roll/pitch=0, 保留 yaw 与 x/y)。
-    // 否则 GICP 会收敛到带 90°/30° 旋转误差的非平面姿态, 导致点云/机器人模型竖直。
-    const Eigen::Matrix3d R = result_t_.rotation();
+    // 先压平(2D): z=0, roll/pitch=0, 保留 yaw 与 x/y, 避免收敛到带 90°/30° 的非平面姿态
+    const Eigen::Matrix3d R = result.T_target_source.rotation();
     const Eigen::Vector3d euler = R.eulerAngles(0, 1, 2);  // roll, pitch, yaw
     Eigen::Isometry3d planar = Eigen::Isometry3d::Identity();
-    planar.translation() << result_t_.translation().x(), result_t_.translation().y(), 0.0;
+    planar.translation() << result.T_target_source.translation().x(),
+        result.T_target_source.translation().y(), 0.0;
     planar.linear() = Eigen::AngleAxisd(euler.z(), Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    result_t_ = previous_result_t_ = planar;
+
+    // 防跳变: 平面配准对 yaw 不敏感, 容易收敛到 180° 翻转/远处局部极小。
+    // 若新结果与上一结果(或 initialpose/init_pose 定下的一致 pose)偏差过大, 直接丢弃,
+    // 保持上一次的正确结果, 让系统稳定在"初始定位 + 里程计跟踪"上。
+    const double dpos = (planar.translation() - previous_result_t_.translation()).norm();
+    const double dangle =
+      Eigen::AngleAxisd(planar.rotation() * previous_result_t_.rotation().inverse()).angle();
+    if (dpos < 5.0 && dangle < 0.5) {  // 5m / ~28° 以内才接受
+      result_t_ = previous_result_t_ = planar;
+    } else {
+      RCLCPP_WARN_STREAM(
+        this->get_logger(),
+        "GICP result rejected (delta pos=" << dpos << "m, angle=" << dangle << "rad)");
+    }
   } else {
     RCLCPP_WARN(this->get_logger(), "GICP did not converge.");
   }
