@@ -139,7 +139,12 @@ def generate_launch_description():
         parameters=[
             configured_params,
             {"use_sim_time": use_sim_time},
-            {"prior_pcd.enable": use_pcd_localization},
+            # 注意: Point-LIO 的 prior_pcd(先验地图配准)在本工程里会导致状态发散
+            # (实测开启后 odom 会漂到几十万米)。这里的 "先验地图求 map->odom"
+            # 实际由 small_gicp_relocalization 完成, 因此 Point-LIO 只需跑纯
+            # 里程计(prior_pcd 关闭), 保持稳定即可。故强制设为 False,
+            # 不再跟随 use_pcd_localization。
+            {"prior_pcd.enable": False},
             {"prior_pcd.prior_pcd_map_path": prior_pcd_file},
         ],
         arguments=["--ros-args", "--log-level", log_level],

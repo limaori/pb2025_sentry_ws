@@ -98,7 +98,7 @@ SmallGicpRelocalizationNode::SmallGicpRelocalizationNode(const rclcpp::NodeOptio
     std::bind(&SmallGicpRelocalizationNode::initialPoseCallback, this, std::placeholders::_1));
 
   register_timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(500),  // 2 Hz
+    std::chrono::milliseconds(2000),  // 2 s: 累积更多帧(更大 source)再做一次配准, 提升 GICP 收敛性
     std::bind(&SmallGicpRelocalizationNode::performRegistration, this));
 
   transform_timer_ = this->create_wall_timer(
@@ -167,7 +167,7 @@ void SmallGicpRelocalizationNode::performRegistration()
 
   register_->reduction.num_threads = num_threads_;
   register_->rejector.max_dist_sq = max_dist_sq_;
-  register_->optimizer.max_iterations = 10;
+  register_->optimizer.max_iterations = 80;
 
   auto result = register_->align(*target_, *source_, *target_tree_, previous_result_t_);
 
