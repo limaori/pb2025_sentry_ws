@@ -173,6 +173,14 @@ void SmallGicpRelocalizationNode::performRegistration()
 
   if (result.converged) {
     result_t_ = previous_result_t_ = result.T_target_source;
+    // 2D 重定位: 把 GICP 结果压平(z=0, roll/pitch=0, 保留 yaw 与 x/y)。
+    // 否则 GICP 会收敛到带 90°/30° 旋转误差的非平面姿态, 导致点云/机器人模型竖直。
+    const Eigen::Matrix3d R = result_t_.rotation();
+    const Eigen::Vector3d euler = R.eulerAngles(0, 1, 2);  // roll, pitch, yaw
+    Eigen::Isometry3d planar = Eigen::Isometry3d::Identity();
+    planar.translation() << result_t_.translation().x(), result_t_.translation().y(), 0.0;
+    planar.linear() = Eigen::AngleAxisd(euler.z(), Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    result_t_ = previous_result_t_ = planar;
   } else {
     RCLCPP_WARN(this->get_logger(), "GICP did not converge.");
   }
