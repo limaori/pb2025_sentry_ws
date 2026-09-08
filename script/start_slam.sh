@@ -135,6 +135,6 @@ echo "[3/3] 启动键鼠控制..."
 start_once \
   "键鼠控制" \
   '[r]os2 run rmoss_gz_base test_chassis_cmd.py' \
-  "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.5 -p w:=0.5"
+  "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.8 -p w:=0.8"
 
 echo "启动流程处理完成（终端模式: ${OPEN_MODE}）。"
