@@ -4,7 +4,10 @@ ign_sim_pointcloud_tool:
     n_scan: 32                                     # 激光雷达垂直扫描线数
     horizon_scan: 1875                             # 每条扫描线的水平采样点数
     ang_bottom: 7.0                                # 雷达垂直视场的底部角度（度）
-    ang_res_y: 1.84375  # (7+52) / 32              # 垂直方向相邻扫描线的角分辨率（度）
+    ang_res_y: 1.903225806451613  # (7+52) / (32-1) # 垂直方向相邻扫描线的角分辨率（度）
+    min_range: 0.1                                 # 丢弃雷达近盲区内的点（米）
+    max_range: 39.9                                # 丢弃40米无回波量程点（米）
+    scan_period: 0.0                               # GPU雷达整帧同时采样，逐点时间偏移为0
 
 point_lio:
   ros__parameters:
@@ -32,19 +35,20 @@ point_lio:
       enable: False                                     # 是否启用先验点云地图
       # NOTE: `prior_pcd_map_path` will be provided in the launch file
       # prior_pcd_map_path: ""
-      init_pose: [ 0.0, 0.0, 0.0 ]                       # 先验地图初始位姿[x, y, yaw]
+      init_pose: [ 3.4, 9.5, 0.0 ]                       # 先验地图初始位姿[x, y, yaw]; 与 rmuc_2025 机器人 spawn 位姿(3.4, 9.5, yaw 0)对齐
 
     preprocess:
       lidar_type: 2                                     # 激光雷达类型：1 Livox，2 Velodyne，3 Ouster
       scan_line: 32                                     # 激光雷达扫描线数
-      timestamp_unit: 2                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
+      scan_rate: 20                                     # 仿真雷达扫描频率（Hz）
+      timestamp_unit: 0                                 # 点云时间戳单位：0秒、1毫秒、2微秒、3纳秒
       blind: 0.5                                        # 忽略雷达近距离盲区半径（米）
 
     mapping:
       imu_en: True                                      # 是否启用IMU融合
       extrinsic_est_en: False                           # 是否在线估计雷达与IMU外参
       imu_time_inte: 0.005                              # IMU采样周期（秒）
-      lidar_time_inte: 0.1                              # 激光雷达采样周期（秒）
+      lidar_time_inte: 0.05                             # 20 Hz激光雷达采样周期（秒）
       satu_acc: 30.0                                    # IMU加速度饱和值
       satu_gyro: 35.0                                   # IMU角速度饱和值
       acc_norm: 9.81                                    # 重力加速度模长（米/秒²）
@@ -68,7 +72,7 @@ point_lio:
                      0.0, 0.0, 1.0 ]
 
     odometry:
-      publish_odometry_without_downsample: True         # 是否发布未下采样的里程计
+      publish_odometry_without_downsample: False        # 每帧发布一次，避免高频里程计挤占点云同步队列
 
     publish:
       path_en: False                                    # 是否发布LIO轨迹
@@ -88,13 +92,21 @@ loam_interface:
     odom_frame: "odom"                                  # 里程计坐标系
     base_frame: "base_footprint"                        # 机器人底盘坐标系
     lidar_frame: "front_mid360"                         # 激光雷达坐标系
+    # Gazebo is planar; prevent Point-LIO's unobservable vertical attitude
+    # drift from moving the simulated robot or cloud.
+    planarize_pose: True
 
 sensor_scan_generation:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     lidar_frame: "front_mid360"                         # 输入雷达坐标系
     base_frame: "base_footprint"                        # 底盘坐标系
-    robot_base_frame: "gimbal_yaw"                      # 机器人运动参考坐标系
+    # Ground-truth simulation publishes a planar odom -> base_footprint TF;
+    # there is no gimbal_yaw chain in Gazebo.
+    robot_base_frame: "base_footprint"                  # 机器人运动参考坐标系
+    # simulation_ground_truth_odometry is the single owner of odom ->
+    # base_footprint.  A second publisher here would make the chassis twitch.
+    publish_tf: False
 
 terrain_analysis:
   ros__parameters:
@@ -160,16 +172,21 @@ small_gicp_relocalization:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     num_threads: 4                                      # GICP使用的线程数
-    num_neighbors: 20                                   # 最近邻点数量
-    global_leaf_size: 0.1                               # 全局点云下采样尺寸（米）
-    registered_leaf_size: 0.05                          # 当前配准点云下采样尺寸（米）
-    max_dist_sq: 3.0                                    # 最大匹配平方距离（米²）
+    num_neighbors: 10                                   # 最近邻点数量
+    global_leaf_size: 0.3                               # 全局点云下采样尺寸（米）
+    registered_leaf_size: 0.2                           # 当前配准点云下采样尺寸（米）
+    max_dist_sq: 1.5                                    # 最大匹配平方距离（米²）
+    registration_interval: 0.5
+    max_translation_step: 2.0
+    max_rotation_step: 0.5
+    min_inlier_ratio: 0.3
+    max_registration_rmse: 0.3
     map_frame: "map"                                    # 地图坐标系
     odom_frame: "odom"                                  # 里程计坐标系
     base_frame: "base_footprint"                        # 底盘坐标系
-    robot_base_frame: "gimbal_yaw"                      # 机器人参考坐标系
+    robot_base_frame: "base_footprint"                  # 2D Pose Estimate对应的底盘坐标系
     lidar_frame: "front_mid360"                         # 雷达坐标系
-    init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]            # 初始位姿[x,y,z,roll,pitch,yaw]
+    init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]            # 初始位姿[x,y,z,roll,pitch,yaw]; 与 rmuc_2025 机器人 spawn 位姿对齐
     # The prior_pcd_file does not need to be specified since it going to be set by defaults in launch.
     # prior_pcd_file: ""
 
@@ -216,7 +233,10 @@ slam_toolbox:
     debug_logging: false                                # 是否输出调试日志
     throttle_scans: 1                                   # 每隔多少帧处理一次扫描
     scan_queue_size: 10                                 # 扫描队列长度
-    transform_publish_period: 0.0                       # TF发布周期，0表示不发布
+    # Let slam_toolbox own map->odom.  The SLAM launch no longer publishes a
+    # competing static transform, so scan-matching corrections are visible to
+    # Nav2/RViz instead of accumulating as point-cloud drift.
+    transform_publish_period: 0.02                      # map->odom TF publish period (s)
     map_update_interval: 0.5                            # 地图更新周期（秒）
     resolution: 0.05                                    # 栅格地图分辨率（米）
     min_laser_range: 0.3                                # 激光最小有效距离（米）
@@ -228,7 +248,7 @@ slam_toolbox:
     enable_interactive_mode: true                       # 是否启用交互式建图
 
     # General Parameters
-    use_scan_matching: false                             # 是否启用扫描匹配
+    use_scan_matching: true                              # use scans to correct odometry drift
     use_scan_barycenter: true                            # 是否使用扫描重心
     minimum_travel_distance: 0.1                         # 触发新扫描的最小移动距离（米）
     minimum_travel_heading: 0.1                          # 触发新扫描的最小转角（弧度）

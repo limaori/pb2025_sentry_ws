@@ -25,7 +25,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, TextSubstitution
+from launch.substitutions import LaunchConfiguration, PythonExpression, TextSubstitution
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
 from nav2_common.launch import RewrittenYaml
@@ -182,13 +182,20 @@ def generate_launch_description():
         parameters=[configured_params],
     )
 
+    # Point-LIO owns odometry whenever SLAM or PCD localization is active.
     start_simulation_odometry = Node(
+        condition=IfCondition(
+            PythonExpression(["not ", slam, " and not ", use_pcd_localization])
+        ),
         package="pb2025_nav_bringup",
         executable="simulation_ground_truth_odometry.py",
         name="simulation_ground_truth_odometry",
         output="screen",
         namespace=namespace,
-        parameters=[{"use_sim_time": use_sim_time}],
+        # The bridge already timestamps odometry in Gazebo simulation time.
+        # Keep this lightweight adapter off the high-rate /clock subscription;
+        # it forwards the source stamp directly below.
+        parameters=[{"use_sim_time": False}],
         remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
     )
 

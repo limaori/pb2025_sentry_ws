@@ -55,6 +55,7 @@ private:
   std::string lidar_frame_;
   std::string base_frame_;
   std::string robot_base_frame_;
+  bool publish_tf_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> br_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_laser_cloud_;

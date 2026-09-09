@@ -1,5 +1,7 @@
 #include "preprocess.h"
 
+#include <algorithm>
+
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
 
@@ -175,7 +177,9 @@ void Preprocess::process_cut_frame_pcl2(
     float yaw_last[MAX_LINE_NUM] = {0.0};   // yaw of last scan point
     float time_last[MAX_LINE_NUM] = {0.0};  // last offset time
 
-    if (pl_orig.points[plsize - 1].time > 0) {
+    if (std::any_of(msg->fields.begin(), msg->fields.end(), [](const auto & field) {
+        return field.name == "time";
+      })) {
       given_offset_time = true;
     } else {
       std::cout << "Compute offset time using constant rotation model." << '\n';
@@ -422,7 +426,9 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::SharedPtr
   std::vector<float> time_last(N_SCANS, 0.0);  // last offset time
   /*****************************************************************/
 
-  if (pl_orig.points[plsize - 1].time > 0) {
+  if (std::any_of(msg->fields.begin(), msg->fields.end(), [](const auto & field) {
+      return field.name == "time";
+    })) {
     given_offset_time = true;
   } else {
     given_offset_time = false;

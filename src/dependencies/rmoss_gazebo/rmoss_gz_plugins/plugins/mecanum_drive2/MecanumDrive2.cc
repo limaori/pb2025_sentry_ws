@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <mutex>
+#include <chrono>
 #include <ignition/common/Util.hh>
 #include <ignition/common/Profiler.hh>
 #include <ignition/plugin/Register.hh>
@@ -79,6 +80,12 @@ public:
     ignition::math::Pose3d initPose;
     ignition::math::Pose3d lastPose;
     transport::Node::Publisher odomPub;
+    // Odometry is consumed by Nav2 at tens of hertz.  Publishing at every
+    // physics tick (often >800 Hz) needlessly saturates the bridge and the
+    // Python ground-truth adapter, which can show up as RViz jitter.
+    double odomPublishFrequency{50.0};
+    std::chrono::steady_clock::duration lastOdomSimTime{};
+    bool odomPublishInitialized{false};
     //velocity cmd
     msgs::Twist targetVel;
     std::mutex targetVelMutex;
@@ -129,6 +136,12 @@ void MecanumDrive2::Configure(const Entity &_entity,
     this->dataPtr->odomPub = this->dataPtr->node.Advertise<msgs::Odometry>(odomTopic);
     this->dataPtr->odomFrameId=this->dataPtr->model.Name(_ecm) + "/odom" ;
     this->dataPtr->odomChildFrameId = this->dataPtr->model.Name(_ecm) + "/" + ignition::common::replaceAll(this->dataPtr->chassisLinkName, "::", "/");
+    if (_sdf->HasElement("odom_publish_frequency"))
+    {
+        this->dataPtr->odomPublishFrequency = _sdf->Get<double>("odom_publish_frequency");
+        if (this->dataPtr->odomPublishFrequency <= 0.0)
+            this->dataPtr->odomPublishFrequency = 50.0;
+    }
     //init PID
     this->dataPtr->xPid.Init(100, 0, 0, 0, 0, 100, -100, 0);
     this->dataPtr->yPid.Init(500, 0, 0, 0, 0, 200, -200, 0);
@@ -207,6 +220,15 @@ void MecanumDrive2Private::OnCmdVel(const ignition::msgs::Twist &_msg)
 void MecanumDrive2Private::UpdateOdometry(const ignition::gazebo::UpdateInfo &_info,
                                          const ignition::gazebo::EntityComponentManager &_ecm)
 {
+    const auto period = std::chrono::duration<double>(1.0 / this->odomPublishFrequency);
+    if (this->odomPublishInitialized &&
+        (_info.simTime - this->lastOdomSimTime) <
+          std::chrono::duration_cast<std::chrono::steady_clock::duration>(period))
+    {
+        return;
+    }
+    this->lastOdomSimTime = _info.simTime;
+    this->odomPublishInitialized = true;
     //get pose and velocity of chassis
     Link chassisLink(this->chassisLink);
     const auto chassisPose = _ecm.Component<components::WorldPose>(this->chassisLink)->Data();
