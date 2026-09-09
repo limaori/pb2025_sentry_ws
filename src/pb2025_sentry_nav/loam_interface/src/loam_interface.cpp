@@ -64,12 +64,27 @@ LoamInterfaceNode::LoamInterfaceNode(const rclcpp::NodeOptions & options)
   pcd_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("registered_scan", 5);
   odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("lidar_odometry", 5);
 
-  pcd_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-    registered_scan_topic_, 5,
-    std::bind(&LoamInterfaceNode::pointCloudCallback, this, std::placeholders::_1));
-  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    state_estimation_topic_, 5,
-    std::bind(&LoamInterfaceNode::odometryCallback, this, std::placeholders::_1));
+  if (planarize_pose_) {
+    synchronized_odom_sub_.subscribe(this, state_estimation_topic_, rmw_qos_profile_sensor_data);
+    synchronized_pcd_sub_.subscribe(this, registered_scan_topic_, rmw_qos_profile_sensor_data);
+    sync_ = std::make_unique<message_filters::Synchronizer<SyncPolicy>>(
+      SyncPolicy(20), synchronized_odom_sub_, synchronized_pcd_sub_);
+    sync_->registerCallback(std::bind(
+      [this](
+        const nav_msgs::msg::Odometry::ConstSharedPtr & odometry,
+        const sensor_msgs::msg::PointCloud2::ConstSharedPtr & cloud) {
+        odometryCallback(odometry);
+        pointCloudCallback(cloud);
+      },
+      std::placeholders::_1, std::placeholders::_2));
+  } else {
+    pcd_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      registered_scan_topic_, 5,
+      std::bind(&LoamInterfaceNode::pointCloudCallback, this, std::placeholders::_1));
+    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      state_estimation_topic_, 5,
+      std::bind(&LoamInterfaceNode::odometryCallback, this, std::placeholders::_1));
+  }
 }
 
 void LoamInterfaceNode::pointCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
@@ -90,8 +105,7 @@ void LoamInterfaceNode::pointCloudCallback(const sensor_msgs::msg::PointCloud2::
   if (planarize_pose_ && planar_pose_available_) {
     // p_odom = T_odom<-camera_init * p_camera_init
     //        = T_odom<-lidar(planar) * inverse(T_camera_init<-lidar)
-    tf_odom_to_camera_init =
-      tf_odom_to_lidar_planar_ * tf_camera_init_to_lidar_.inverse();
+    tf_odom_to_camera_init = tf_odom_to_lidar_planar_ * tf_camera_init_to_lidar_.inverse();
   }
   auto out = std::make_shared<sensor_msgs::msg::PointCloud2>();
   pcl_ros::transformPointCloud(odom_frame_, tf_odom_to_camera_init, *msg, *out);

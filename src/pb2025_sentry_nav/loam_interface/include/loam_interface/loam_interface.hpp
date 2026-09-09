@@ -18,6 +18,9 @@
 #include <memory>
 #include <string>
 
+#include "message_filters/subscriber.h"
+#include "message_filters/sync_policies/exact_time.h"
+#include "message_filters/synchronizer.h"
 #include "nav_msgs/msg/odometry.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "tf2_ros/buffer.h"
@@ -38,6 +41,11 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pcd_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  using SyncPolicy = message_filters::sync_policies::ExactTime<
+    nav_msgs::msg::Odometry, sensor_msgs::msg::PointCloud2>;
+  message_filters::Subscriber<nav_msgs::msg::Odometry> synchronized_odom_sub_;
+  message_filters::Subscriber<sensor_msgs::msg::PointCloud2> synchronized_pcd_sub_;
+  std::unique_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
 
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pcd_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;

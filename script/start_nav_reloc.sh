@@ -52,9 +52,7 @@ if [ -z "$PRIOR_PCD_FILE" ] && [ -f "$DEFAULT_PRIOR_PCD" ]; then
   PRIOR_PCD_FILE="$DEFAULT_PRIOR_PCD"
 fi
 
-# 重定位依赖先验 PCD 地图 (Point-LIO 的 prior_pcd + small_gicp 的目标点云)。
-# 若路径无效, point_lio 在加载地图时会直接段错误 (Segmentation fault),
-# 从而导致整条重定位链条断掉。这里提前硬校验, 报错退出而不是静默崩溃。
+# 重定位依赖 small_gicp 的先验 PCD 目标点云，Point-LIO 只负责里程计。
 if [ -z "$PRIOR_PCD_FILE" ]; then
   echo "[错误] 未找到先验点云地图。" >&2
   echo "[错误] 请用 PRIOR_PCD_FILE=/绝对路径/map.pcd 指定, 或确保默认路径存在:" >&2
@@ -190,4 +188,3 @@ start_once \
   "ros2 run rmoss_gz_base test_chassis_cmd.py --ros-args -r __ns:=/red_standard_robot1/robot_base -p v:=0.8 -p w:=0.8"
 
 echo "启动流程处理完成（终端模式: ${OPEN_MODE}，世界: ${WORLD}，先验地图: ${PRIOR_PCD_FILE:-未指定}）。"
-load
