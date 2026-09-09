@@ -130,7 +130,7 @@ def generate_launch_description():
         output="screen",
         respawn=use_respawn,
         respawn_delay=2.0,
-        parameters=[configured_params],
+        parameters=[configured_params, {"use_sim_time": use_sim_time}],
         arguments=["--ros-args", "--log-level", log_level],
         remappings=[
             ("/map", "map"),
@@ -148,35 +148,11 @@ def generate_launch_description():
         respawn_delay=2.0,
         parameters=[
             configured_params,
+            {"use_sim_time": use_sim_time},
             {"prior_pcd.enable": False},
             {"pcd_save.pcd_save_en": True},
         ],
         arguments=["--ros-args", "--log-level", log_level],
-    )
-
-    start_static_transform_node = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="static_transform_publisher_map2odom",
-        output="screen",
-        arguments=[
-            "--x",
-            "0.0",
-            "--y",
-            "0.0",
-            "--z",
-            "0.0",
-            "--roll",
-            "0.0",
-            "--pitch",
-            "0.0",
-            "--yaw",
-            "0.0",
-            "--frame-id",
-            "map",
-            "--child-frame-id",
-            "odom",
-        ],
     )
 
     ld = LaunchDescription()
@@ -196,6 +172,5 @@ def generate_launch_description():
     ld.add_action(start_pointcloud_to_laserscan_node)
     ld.add_action(start_sync_slam_toolbox_node)
     ld.add_action(start_point_lio_node)
-    ld.add_action(start_static_transform_node)
 
     return ld

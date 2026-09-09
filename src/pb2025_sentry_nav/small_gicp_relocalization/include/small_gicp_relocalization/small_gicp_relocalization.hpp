@@ -55,6 +55,11 @@ private:
   float global_leaf_size_;
   float registered_leaf_size_;
   float max_dist_sq_;
+  double registration_interval_;
+  double max_translation_step_;
+  double max_rotation_step_;
+  double min_inlier_ratio_;
+  double max_registration_rmse_;
   std::vector<double> init_pose_;
 
   std::string map_frame_;
@@ -63,7 +68,6 @@ private:
   std::string base_frame_;
   std::string robot_base_frame_;
   std::string lidar_frame_;
-  std::string current_scan_frame_id_;
   std::string input_cloud_topic_;
   rclcpp::Time last_scan_time_;
   Eigen::Isometry3d result_t_;
@@ -71,12 +75,10 @@ private:
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr global_map_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr registered_scan_;
-  pcl::PointCloud<pcl::PointXYZ>::Ptr accumulated_cloud_;
   pcl::PointCloud<pcl::PointCovariance>::Ptr target_;
   pcl::PointCloud<pcl::PointCovariance>::Ptr source_;
 
   std::shared_ptr<small_gicp::KdTree<pcl::PointCloud<pcl::PointCovariance>>> target_tree_;
-  std::shared_ptr<small_gicp::KdTree<pcl::PointCloud<pcl::PointCovariance>>> source_tree_;
   std::shared_ptr<
     small_gicp::Registration<small_gicp::GICPFactor, small_gicp::ParallelReductionOMP>>
     register_;

@@ -23,6 +23,7 @@ def generate_launch_description():
     lidar_frame = LaunchConfiguration("lidar_frame")
     base_frame = LaunchConfiguration("base_frame")
     robot_base_frame = LaunchConfiguration("robot_base_frame")
+    publish_tf = LaunchConfiguration("publish_tf")
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
     # In case of the transforms (tf), currently, there doesn't seem to be a better alternative
@@ -54,6 +55,12 @@ def generate_launch_description():
         description="Frame ID for Gimbal",
     )
 
+    declare_publish_tf = DeclareLaunchArgument(
+        "publish_tf",
+        default_value="true",
+        description="Whether to publish the odometry-to-base transform",
+    )
+
     start_sensor_scan_generation = Node(
         package="sensor_scan_generation",
         executable="sensor_scan_generation_node",
@@ -64,6 +71,7 @@ def generate_launch_description():
             {"lidar_frame": lidar_frame},
             {"base_frame": base_frame},
             {"robot_base_frame": robot_base_frame},
+            {"publish_tf": publish_tf},
         ],
     )
 
@@ -74,6 +82,7 @@ def generate_launch_description():
     ld.add_action(declare_lidar_frame)
     ld.add_action(declare_base_frame)
     ld.add_action(declare_robot_base_frame)
+    ld.add_action(declare_publish_tf)
     ld.add_action(start_sensor_scan_generation)
 
     return ld

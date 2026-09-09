@@ -52,3 +52,34 @@ cd ..
     ```zsh
     ros2 launch small_gicp_relocalization small_gicp_relocalization_launch.py
     ```
+
+## Registration and simulation
+
+The input cloud must be in `odom_frame`. Each registration uses the latest scan,
+downsampled by `registered_leaf_size`, at `registration_interval` seconds of ROS
+time (default 0.5). Old scans are not accumulated while registration is busy.
+
+Planar corrections use `atan2(R(1, 0), R(0, 0))` for yaw. Taking the third component
+of Eigen's XYZ Euler decomposition can turn a small negative roll into a yaw near
+180 degrees when roll and pitch are discarded.
+
+An update must converge and pass the following checks after planar projection:
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `max_translation_step` | 2.0 m | Maximum change from the previous accepted correction |
+| `max_rotation_step` | 0.5 rad | Maximum rotation change from the previous accepted correction |
+| `min_inlier_ratio` | 0.3 | Minimum fraction of source points within the correspondence distance |
+| `max_registration_rmse` | 0.3 m | Maximum nearest-neighbor RMSE for those inliers |
+
+The correction is not permanently bounded around `init_pose`: `map -> odom` must
+be able to follow accumulated odometry drift. A rough starting pose is still
+required because GICP performs local registration. RViz `2D Pose Estimate` resets
+that pose using `robot_base_frame`; simulation uses `base_footprint`.
+
+For the Ignition GPU lidar, set the converter's `scan_period` to 0.0. All points
+are measured at the message timestamp. Point-LIO must honor the explicit `time`
+field even when every offset is zero. Synthetic rotating-lidar offsets cause
+false motion compensation during translation and turns. Use a PCD and occupancy
+map from the same world and mapping origin; a previously distorted PCD may need
+to be rebuilt after correcting the sensor timing.

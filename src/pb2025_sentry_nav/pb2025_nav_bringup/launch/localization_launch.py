@@ -138,7 +138,13 @@ def generate_launch_description():
         respawn_delay=2.0,
         parameters=[
             configured_params,
-            {"prior_pcd.enable": use_pcd_localization},
+            {"use_sim_time": use_sim_time},
+            # 注意: Point-LIO 的 prior_pcd(先验地图配准)在本工程里会导致状态发散
+            # (实测开启后 odom 会漂到几十万米)。这里的 "先验地图求 map->odom"
+            # 实际由 small_gicp_relocalization 完成, 因此 Point-LIO 只需跑纯
+            # 里程计(prior_pcd 关闭), 保持稳定即可。故强制设为 False,
+            # 不再跟随 use_pcd_localization。
+            {"prior_pcd.enable": False},
             {"prior_pcd.prior_pcd_map_path": prior_pcd_file},
         ],
         arguments=["--ros-args", "--log-level", log_level],
@@ -207,13 +213,6 @@ def generate_launch_description():
                 parameters=[configured_params],
             ),
             ComposableNode(
-                condition=IfCondition(use_pcd_localization),
-                package="small_gicp_relocalization",
-                plugin="small_gicp_relocalization::SmallGicpRelocalizationNode",
-                name="small_gicp_relocalization",
-                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file}],
-            ),
-            ComposableNode(
                 package="nav2_lifecycle_manager",
                 plugin="nav2_lifecycle_manager::LifecycleManager",
                 name="lifecycle_manager_localization",
@@ -225,6 +224,22 @@ def generate_launch_description():
                     }
                 ],
             ),
+        ],
+    )
+
+    # ComposableNode conditions are not consistently honored across ROS 2
+    # distributions. Keep the optional GICP component behind an action-level
+    # condition so it is never loaded for static-map localization.
+    load_pcd_localization_node = LoadComposableNodes(
+        condition=IfCondition(use_pcd_localization),
+        target_container=container_name_full,
+        composable_node_descriptions=[
+            ComposableNode(
+                package="small_gicp_relocalization",
+                plugin="small_gicp_relocalization::SmallGicpRelocalizationNode",
+                name="small_gicp_relocalization",
+                parameters=[configured_params, {"prior_pcd_file": prior_pcd_file}],
+            )
         ],
     )
 
@@ -256,5 +271,6 @@ def generate_launch_description():
     ld.add_action(start_static_transform_node)
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)
+    ld.add_action(load_pcd_localization_node)
 
     return ld

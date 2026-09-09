@@ -14,11 +14,71 @@
 
 #include "sensor_scan_generation/sensor_scan_generation.hpp"
 
+#include <cmath>
+
 #include "pcl_ros/transforms.hpp"
+#include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace sensor_scan_generation
 {
+
+namespace
+{
+
+constexpr double kPositionJitterThreshold = 0.002;
+constexpr double kYawJitterThreshold = 0.002;
+
+double normalizeAngle(double angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
+
+// Nav2's base_footprint is a planar frame.  Point-LIO estimates a full 6DoF
+// pose for the tilted lidar, but passing its z/roll/pitch noise to the planar
+// robot frame makes the robot model bob relative to a 2D map.
+tf2::Transform planarize(const tf2::Transform & transform)
+{
+  tf2::Transform planar = tf2::Transform::getIdentity();
+  const auto & origin = transform.getOrigin();
+  planar.setOrigin(tf2::Vector3(origin.x(), origin.y(), 0.0));
+  tf2::Quaternion rotation;
+  rotation.setRPY(0.0, 0.0, tf2::getYaw(transform.getRotation()));
+  planar.setRotation(rotation);
+  return planar;
+}
+
+// Point-LIO still has millimetre-level XY and yaw noise after planarization.
+// Keep that noise from moving the RViz model while the robot is stationary,
+// while allowing any meaningful motion to pass through unchanged.
+tf2::Transform suppressJitter(const tf2::Transform & transform, bool robot_frame)
+{
+  static tf2::Transform last_chassis_transform;
+  static tf2::Transform last_robot_transform;
+  static bool chassis_initialized = false;
+  static bool robot_initialized = false;
+  auto & last_transform = robot_frame ? last_robot_transform : last_chassis_transform;
+  auto & initialized = robot_frame ? robot_initialized : chassis_initialized;
+
+  if (!initialized) {
+    last_transform = transform;
+    initialized = true;
+    return transform;
+  }
+
+  const auto & origin = transform.getOrigin();
+  const auto & last_origin = last_transform.getOrigin();
+  const double dx = origin.x() - last_origin.x();
+  const double dy = origin.y() - last_origin.y();
+  const double yaw_delta = normalizeAngle(
+    tf2::getYaw(transform.getRotation()) - tf2::getYaw(last_transform.getRotation()));
+
+  if (std::hypot(dx, dy) < kPositionJitterThreshold && std::abs(yaw_delta) < kYawJitterThreshold) {
+    return last_transform;
+  }
+
+  last_transform = transform;
+  return transform;
+}
+
+}  // namespace
 
 SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & options)
 : Node("sensor_scan_generation", options)
@@ -26,10 +86,12 @@ SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & o
   this->declare_parameter<std::string>("lidar_frame", "");
   this->declare_parameter<std::string>("base_frame", "");
   this->declare_parameter<std::string>("robot_base_frame", "");
+  this->declare_parameter<bool>("publish_tf", true);
 
   this->get_parameter("lidar_frame", lidar_frame_);
   this->get_parameter("base_frame", base_frame_);
   this->get_parameter("robot_base_frame", robot_base_frame_);
+  this->get_parameter("publish_tf", publish_tf_);
 
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
@@ -54,10 +116,9 @@ SensorScanGenerationNode::SensorScanGenerationNode(const rclcpp::NodeOptions & o
 
   sync_ = std::make_unique<message_filters::Synchronizer<SyncPolicy>>(
     SyncPolicy(100), odometry_sub_, laser_cloud_sub_);
-  sync_->registerCallback(
-    std::bind(
-      &SensorScanGenerationNode::laserCloudAndOdometryHandler, this, std::placeholders::_1,
-      std::placeholders::_2));
+  sync_->registerCallback(std::bind(
+    &SensorScanGenerationNode::laserCloudAndOdometryHandler, this, std::placeholders::_1,
+    std::placeholders::_2));
 }
 
 void SensorScanGenerationNode::laserCloudAndOdometryHandler(
@@ -76,13 +137,37 @@ void SensorScanGenerationNode::laserCloudAndOdometryHandler(
   tf_odom_to_chassis = tf_odom_to_lidar * tf_lidar_to_chassis;
   tf_odom_to_robot_base = tf_odom_to_lidar * tf_lidar_to_robot_base_;
 
-  publishTransform(
-    tf_odom_to_chassis, odometry_msg->header.frame_id, base_frame_, pcd_msg->header.stamp);
-  publishOdometry(
-    tf_odom_to_robot_base, odometry_msg->header.frame_id, robot_base_frame_, pcd_msg->header.stamp);
+  const auto chassis_transform = suppressJitter(planarize(tf_odom_to_chassis), false);
+  const auto robot_base_transform = suppressJitter(planarize(tf_odom_to_robot_base), true);
 
+  if (publish_tf_) {
+    publishTransform(
+      chassis_transform, odometry_msg->header.frame_id, base_frame_, pcd_msg->header.stamp);
+  }
+  publishOdometry(
+    robot_base_transform, odometry_msg->header.frame_id, robot_base_frame_, pcd_msg->header.stamp);
+
+  // Use the same filtered planar pose as the TF published above.  Transforming
+  // the cloud with the raw Point-LIO pose while publishing a filtered base TF
+  // makes a static scene appear to slide by a few millimetres in RViz.
   sensor_msgs::msg::PointCloud2 out;
-  pcl_ros::transformPointCloud(lidar_frame_, tf_odom_to_lidar.inverse(), *pcd_msg, out);
+  // Ground-truth simulation and loam_interface both publish registered_scan
+  // directly in odom.  Applying the lidar<-odom transform again would move
+  // every point twice and appears as a drifting/flying map in RViz.  Raw
+  // lidar-frame clouds still use the normal conversion path.
+  if (
+    pcd_msg->header.frame_id == lidar_frame_ ||
+    pcd_msg->header.frame_id == odometry_msg->header.frame_id ||
+    pcd_msg->header.frame_id == "odom") {
+    // Gazebo point clouds are already expressed in the lidar frame.  Point-LIO
+    // and loam_interface clouds are expressed in odom.  In both cases the
+    // message is ready for RViz; applying the inverse pose again would move the
+    // cloud twice and make it appear to fly or drift.
+    out = *pcd_msg;
+  } else {
+    const auto filtered_odom_to_lidar = chassis_transform * tf_lidar_to_chassis.inverse();
+    pcl_ros::transformPointCloud(lidar_frame_, filtered_odom_to_lidar.inverse(), *pcd_msg, out);
+  }
   pub_laser_cloud_->publish(out);
 }
 
@@ -96,8 +181,28 @@ tf2::Transform SensorScanGenerationNode::getTransform(
     tf2::fromMsg(transform_stamped.transform, transform);
     return transform;
   } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN(this->get_logger(), "TF lookup failed: %s. Returning identity.", ex.what());
-    return tf2::Transform::getIdentity();
+    // Gazebo publishes sensor messages slightly ahead of robot_state_publisher.
+    // A lookup at the exact cloud timestamp can therefore fail with a future
+    // extrapolation even though a valid latest transform is available.  Falling
+    // back to the latest transform avoids publishing a frame with an identity
+    // transform, which makes the point cloud jump/fly in RViz.
+    try {
+      auto transform_stamped = tf_buffer_->lookupTransform(
+        target_frame, source_frame, tf2::TimePointZero, tf2::durationFromSec(0.5));
+      tf2::Transform transform;
+      tf2::fromMsg(transform_stamped.transform, transform);
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "TF at %.3f unavailable (%s); using latest transform for %s <- %s", time.seconds(),
+        ex.what(), target_frame.c_str(), source_frame.c_str());
+      return transform;
+    } catch (tf2::TransformException & latest_ex) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "TF lookup failed for %s <- %s (%s); latest lookup also failed (%s). Returning identity.",
+        target_frame.c_str(), source_frame.c_str(), ex.what(), latest_ex.what());
+      return tf2::Transform::getIdentity();
+    }
   }
 }
 
@@ -130,13 +235,14 @@ void SensorScanGenerationNode::publishOdometry(
 
   static tf2::Transform previous_transform;
   static auto previous_time = std::chrono::steady_clock::now();
+  static bool previous_initialized = false;
   const auto current_time = std::chrono::steady_clock::now();
 
   const double dt =
     std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - previous_time).count() *
     1e-9;
 
-  if (dt > 0) {
+  if (previous_initialized && dt > 0) {
     const auto linear_velocity = (transform.getOrigin() - previous_transform.getOrigin()) / dt;
 
     const tf2::Quaternion q_diff =
@@ -153,6 +259,7 @@ void SensorScanGenerationNode::publishOdometry(
 
   previous_transform = transform;
   previous_time = current_time;
+  previous_initialized = true;
 
   pub_chassis_odometry_->publish(out);
 }
