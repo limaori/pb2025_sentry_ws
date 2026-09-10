@@ -23,3 +23,6 @@ sentry_*/
 
 *.log
 /log_diag/
+
+# 原始建图数据库（单文件极大，超 GitHub 100MB 限制，不入库）
+*.db3
