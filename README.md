@@ -8,6 +8,8 @@
 
 ## 2. Quick Start
 
+SRM 实车 MID360 建图（复用 `/home/srm/srm_auto_sentry` 的机器人模型）：见 [实车 SLAM 建图](./实车SLAM建图.md)，启动入口为 `bash script/start_real_slam.sh`。
+
 ### 2.1 Setup Environment
 
 - Ubuntu 22.04
