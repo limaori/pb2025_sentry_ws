@@ -51,6 +51,7 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration("use_respawn")
     log_level = LaunchConfiguration("log_level")
     use_pcd_localization = LaunchConfiguration("use_pcd_localization")
+    use_lio_odometry = LaunchConfiguration("use_lio_odometry")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
     map_to_odom_y = LaunchConfiguration("map_to_odom_y")
     map_to_odom_yaw = LaunchConfiguration("map_to_odom_yaw")
@@ -140,6 +141,14 @@ def generate_launch_description():
         "log_level", default_value="info", description="log level"
     )
     declare_use_pcd_localization_cmd = DeclareLaunchArgument("use_pcd_localization", default_value="False")
+    declare_use_lio_odometry_cmd = DeclareLaunchArgument(
+        "use_lio_odometry",
+        default_value="False",
+        description=(
+            "Point-LIO provides odometry without GICP relocalization; "
+            "map->odom stays static (requires the odometry chain, not the prior PCD)"
+        ),
+    )
     declare_map_to_odom_x_cmd = DeclareLaunchArgument("map_to_odom_x", default_value="0.0")
     declare_map_to_odom_y_cmd = DeclareLaunchArgument("map_to_odom_y", default_value="0.0")
     declare_map_to_odom_yaw_cmd = DeclareLaunchArgument("map_to_odom_yaw", default_value="0.0")
@@ -188,6 +197,7 @@ def generate_launch_description():
                     "use_respawn": use_respawn,
                     "container_name": "nav2_container",
                     "use_pcd_localization": use_pcd_localization,
+                    "use_lio_odometry": use_lio_odometry,
                     "map_to_odom_x": map_to_odom_x,
                     "map_to_odom_y": map_to_odom_y,
                     "map_to_odom_yaw": map_to_odom_yaw,
@@ -201,6 +211,7 @@ def generate_launch_description():
                     "namespace": namespace,
                     "slam": slam,
                     "use_pcd_localization": use_pcd_localization,
+                    "use_lio_odometry": use_lio_odometry,
                     "use_sim_time": use_sim_time,
                     "autostart": autostart,
                     "params_file": params_file,
@@ -231,6 +242,7 @@ def generate_launch_description():
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
     ld.add_action(declare_use_pcd_localization_cmd)
+    ld.add_action(declare_use_lio_odometry_cmd)
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)

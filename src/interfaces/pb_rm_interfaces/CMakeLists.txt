@@ -25,6 +25,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Models.msg"
   "msg/RobotStateInfo.msg"
 
+  # 以下两个是 SRM 实车串口节点(src/standard_robot_pp_ros2, 移植自 ~/srm_auto_sentry)
+  # 接收裁判系统报文后转发的数据类型, 与导航无关但该节点需要它们才能编译。
+  "msg/ProjectileAllowance.msg"
+  "msg/SwitchPosition.msg"
+
   DEPENDENCIES
     geometry_msgs
 )

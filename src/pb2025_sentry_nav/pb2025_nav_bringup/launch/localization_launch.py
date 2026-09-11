@@ -41,6 +41,11 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration("use_respawn")
     log_level = LaunchConfiguration("log_level")
     use_pcd_localization = LaunchConfiguration("use_pcd_localization")
+    # 只跑 Point-LIO 里程计、不做 GICP 重定位（"纯 LIO"模式）。
+    # 与 use_pcd_localization 分开是为了让 "谁来提供里程计" 和 "要不要 GICP 修正"
+    # 可以独立选择：纯 LIO 模式下 map->odom 由静态 TF 给出（见下文的
+    # start_static_transform_node，它的条件是 use_pcd_localization 为假）。
+    use_lio_odometry = LaunchConfiguration("use_lio_odometry")
     map_to_odom_x = LaunchConfiguration("map_to_odom_x")
     map_to_odom_y = LaunchConfiguration("map_to_odom_y")
     map_to_odom_yaw = LaunchConfiguration("map_to_odom_yaw")
@@ -124,12 +129,21 @@ def generate_launch_description():
         "use_pcd_localization", default_value="False",
         description="Use small_gicp localization against a prior PCD",
     )
+    declare_use_lio_odometry_cmd = DeclareLaunchArgument(
+        "use_lio_odometry", default_value="False",
+        description=(
+            "Use Point-LIO odometry without GICP relocalization; "
+            "map->odom stays a static transform"
+        ),
+    )
     declare_map_to_odom_x_cmd = DeclareLaunchArgument("map_to_odom_x", default_value="0.0")
     declare_map_to_odom_y_cmd = DeclareLaunchArgument("map_to_odom_y", default_value="0.0")
     declare_map_to_odom_yaw_cmd = DeclareLaunchArgument("map_to_odom_yaw", default_value="0.0")
 
     start_point_lio_node = Node(
-        condition=IfCondition(use_pcd_localization),
+        condition=IfCondition(
+            PythonExpression([use_pcd_localization, " or ", use_lio_odometry])
+        ),
         package="point_lio",
         executable="pointlio_mapping",
         name="point_lio",
@@ -262,6 +276,7 @@ def generate_launch_description():
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
     ld.add_action(declare_use_pcd_localization_cmd)
+    ld.add_action(declare_use_lio_odometry_cmd)
     ld.add_action(declare_map_to_odom_x_cmd)
     ld.add_action(declare_map_to_odom_y_cmd)
     ld.add_action(declare_map_to_odom_yaw_cmd)

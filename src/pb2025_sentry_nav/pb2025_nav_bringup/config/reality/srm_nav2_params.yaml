@@ -201,7 +201,9 @@ fake_vel_transform:
     robot_base_frame: "base_link"
     fake_robot_base_frame: "base_link_fake"
     input_cmd_vel_topic: "cmd_vel_nav2_result"
-    output_cmd_vel_topic: "cmd_vel"
+    # 底盘串口节点订阅的是 cmd_vel_chassis(SRM 老工程的命名), 不是 cmd_vel;
+    # 老工程里 fake_vel_transform 就是发这个名, 两边必须一致, 否则链路断开、车不动。
+    output_cmd_vel_topic: "cmd_vel_chassis"
     cmd_spin_topic: "cmd_spin"
     init_spin_speed: 0.0
 

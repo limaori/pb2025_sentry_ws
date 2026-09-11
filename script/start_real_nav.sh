@@ -11,17 +11,21 @@
 #   ./script/start_real_nav.sh --list-maps                # 列出可选地图
 #   ./script/start_real_nav.sh --check                    # 只解析并打印将要执行的命令
 #
-# 三种定位方式(互斥), 区别只在 map->odom 由谁发布:
+# 四种定位方式(互斥), 区别只在 map->odom 由谁发布:
 #   --slam    : slam_toolbox 建图, 由 SLAM 发布 map->odom, 不需要先验地图
 #   --reloc   : small_gicp 与先验 PCD 做 GICP 配准, 发布 map->odom;
 #               需要 --prior-pcd, odom->base 由 point_lio 提供
+#   --lio     : 只要 Point-LIO 的里程计, 不做重定位、不用先验点云;
+#               map->odom 用静态 TF (--map-to-odom 决定)。实车推荐用这个
 #   (默认)    : map_server 加载先验栅格图 + 静态 map->odom, 需要外部里程计
+#               (只适用于仿真真值/底盘自带里程计的场景, 实车这样起车不会动)
 #
 # 常用可选项:
 #   -m, --map NAME|PATH        地图名或路径 (默认 srm_site_01)
 #       --prior-pcd PATH       重定位先验点云, 默认 pcd/reality/<map>.pcd
-#       --slam / --reloc       见上, 两者互斥
-#       --map-to-odom X Y YAW  静态定位模式下 map->odom 初始位姿 (默认 0 0 0)
+#       --slam / --reloc / --lio   见上, 三者互斥
+#       --map-to-odom X Y YAW  静态定位模式下 map->odom 初始位姿 (默认 2.30 2.00 0.0,
+#                              即默认地图 srm_site_01 的场地中心、车头朝地图 +x)
 #       --params-file PATH     nav2 参数文件 (默认 config/reality/srm_nav2_params.yaml)
 #       --lidar-xyz "X Y Z"    雷达在 base_link 下的安装位置 (默认 0.15 -0.15 0.22)
 #       --lidar-rpy "R P Y"    雷达安装角, 弧度 (默认 -0.06981317007977318 0 -1.5707963267948966)
@@ -32,6 +36,8 @@
 #                               若车体模块已自行发布 URDF/TF, 请加此开关避免重复)
 #       --no-rviz              不启动 RViz (默认启动)
 #       --joy                  启动手柄遥控 (默认关闭)
+#       --no-chassis           不启动底盘串口节点
+#                              (默认启动: /cmd_vel 的唯一消费者, 不启动车不会动)
 #       --no-composition       不使用组合节点 (use_composition:=False)
 #   -n, --check                只解析并打印将要执行的命令, 不真正启动
 #   -h, --help                 显示帮助
@@ -40,6 +46,7 @@
 #   OPEN_MODE=tab|window       终端标签页 / 独立窗口 (默认 tab)
 #   TERMINAL=gnome-terminal    终端程序
 #   PB2025_WS_DIR=<ws>         覆盖工作空间路径
+#   LIDAR_CONFIG_FILE=<json>   覆盖雷达驱动网络配置 (默认 config/reality/mid360_user_config.json)
 #
 # 说明:
 #   - 导航栈通过 bringup_launch.py 组装, 因此重定位开关真正可用
@@ -72,16 +79,26 @@ TERMINAL="${TERMINAL:-gnome-terminal}"
 MAP_NAME="${MAP_NAME:-${MAP:-srm_site_01}}"
 PRIOR_PCD_FILE="${PRIOR_PCD_FILE:-}"
 PARAMS_FILE="${PARAMS_FILE:-}"
+LIDAR_CONFIG_FILE="${LIDAR_CONFIG_FILE:-}"
 NAMESPACE="${NAMESPACE:-}"
 START_SLAM="${START_SLAM:-0}"
 START_RELOC="${START_RELOC:-0}"
+START_LIO="${START_LIO:-0}"
 USE_RVIZ="${USE_RVIZ:-1}"
 USE_ROBOT_STATE_PUB="${USE_ROBOT_STATE_PUB:-1}"
 USE_JOY="${USE_JOY:-0}"
+# 底盘串口节点默认启动: 它是 /cmd_vel 的唯一消费者, 不启动车就不会动。
+# 用的是 SRM 实车协议版本 (src/standard_robot_pp_ros2, 从 ~/srm_auto_sentry 移植),
+# 官方版已挂起在 src/standard_robot_pp_ros2_official_SUPERSEDED。
+USE_CHASSIS="${USE_CHASSIS:-1}"
 USE_COMPOSITION="${USE_COMPOSITION:-1}"
-MAP_TO_ODOM_X="${MAP_TO_ODOM_X:-0.0}"
-MAP_TO_ODOM_Y="${MAP_TO_ODOM_Y:-0.0}"
-MAP_TO_ODOM_YAW="${MAP_TO_ODOM_YAW:-0.0}"
+# 起步位置 = 车现在停的地方在地图坐标系里的位姿 (x, y, yaw弧度)。
+# 数值由"实时点云 vs 地图"扫描匹配算出(见 实车部署方案(ai).md 现场调试记录),
+# 位置约 (0.10, 0.00)、朝向 283°。换停车位置后需要重算。
+# 仅在静态 map->odom 生效的模式下有用(--lio 或默认模式)。
+MAP_TO_ODOM_X="${MAP_TO_ODOM_X:-0.10}"
+MAP_TO_ODOM_Y="${MAP_TO_ODOM_Y:-0.00}"
+MAP_TO_ODOM_YAW="${MAP_TO_ODOM_YAW:-4.9393}"
 DRY_RUN="${DRY_RUN:-0}"
 # SRM 实车雷达安装位姿（与 srm_slam_launch.py 的默认值一致）
 LIDAR_XYZ="${LIDAR_XYZ:-0.15 -0.15 0.22}"
@@ -113,6 +130,12 @@ PACKAGE_SRC_DIR="$SRC_SHARE_DIR"
 
 if [ -z "$PARAMS_FILE" ]; then
   PARAMS_FILE="$PACKAGE_DIR/config/reality/srm_nav2_params.yaml"
+fi
+
+# 雷达驱动的网络配置文件。必须与参数文件 livox 段声明的外参保持一致（都要求驱动外参为全零，
+# 安装位姿由 URDF / lidar_xyz / lidar_rpy 表达）。
+if [ -z "$LIDAR_CONFIG_FILE" ]; then
+  LIDAR_CONFIG_FILE="$PACKAGE_DIR/config/reality/mid360_user_config.json"
 fi
 
 RVIZ_CONFIG="$PACKAGE_DIR/rviz/nav2_default_view.rviz"
@@ -226,12 +249,16 @@ while [ $# -gt 0 ]; do
     --no-slam) START_SLAM=0; shift ;;
     --reloc | --relocalization) START_RELOC=1; shift ;;
     --no-reloc) START_RELOC=0; shift ;;
+    --lio | --lio-only) START_LIO=1; shift ;;
+    --no-lio) START_LIO=0; shift ;;
     --rviz) USE_RVIZ=1; shift ;;
     --no-rviz) USE_RVIZ=0; shift ;;
     --robot-state-pub) USE_ROBOT_STATE_PUB=1; shift ;;
     --no-robot-state-pub) USE_ROBOT_STATE_PUB=0; shift ;;
     --joy) USE_JOY=1; shift ;;
     --no-joy) USE_JOY=0; shift ;;
+    --chassis) USE_CHASSIS=1; shift ;;
+    --no-chassis) USE_CHASSIS=0; shift ;;
     --composition) USE_COMPOSITION=1; shift ;;
     --no-composition) USE_COMPOSITION=0; shift ;;
     -n | --check) DRY_RUN=1; shift ;;
@@ -246,19 +273,51 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- 参数校验 -------------------------------------------------------------
-if is_true "$START_SLAM" && is_true "$START_RELOC"; then
-  echo "[错误] SLAM 与重定位互斥: SLAM 由 slam_toolbox 发布 map->odom," >&2
-  echo "[错误] 重定位由 small_gicp 发布 map->odom, 同时开启会导致 TF 冲突。" >&2
+# 三种定位方式互斥(区别只在 map->odom 由谁发布), 先归一化成 0/1。
+SLAM_ON=0
+RELOC_ON=0
+LIO_ON=0
+if is_true "$START_SLAM"; then SLAM_ON=1; fi
+if is_true "$START_RELOC"; then RELOC_ON=1; fi
+if is_true "$START_LIO"; then LIO_ON=1; fi
+
+if [ $((SLAM_ON + RELOC_ON + LIO_ON)) -gt 1 ]; then
+  echo "[错误] --slam / --reloc / --lio 三者互斥, 因为它们都决定 map->odom 由谁发布:" >&2
+  echo "[错误]   --slam : slam_toolbox 发布 map->odom (边跑边建图)" >&2
+  echo "[错误]   --reloc: small_gicp 与先验 PCD 配准后发布 map->odom" >&2
+  echo "[错误]   --lio  : Point-LIO 只提供里程计, map->odom 用静态 TF (不用先验点云)" >&2
+  echo "[错误] 同时开启会导致 TF 冲突。" >&2
   exit 1
 fi
 
-SLAM_ARG=$([ "$START_SLAM" = "1" ] && echo True || echo False)
-RELOC_ARG=$([ "$START_RELOC" = "1" ] && echo True || echo False)
+SLAM_ARG=$([ "$SLAM_ON" = "1" ] && echo True || echo False)
+RELOC_ARG=$([ "$RELOC_ON" = "1" ] && echo True || echo False)
+LIO_ARG=$([ "$LIO_ON" = "1" ] && echo True || echo False)
 COMPOSITION_ARG=$([ "$USE_COMPOSITION" = "1" ] && echo True || echo False)
 
 if [ ! -f "$PARAMS_FILE" ]; then
   echo "[错误] nav2 参数文件不存在: $PARAMS_FILE" >&2
   echo "[错误] 用 --params-file 指定, 或确认工作空间已编译。" >&2
+  exit 1
+fi
+
+if [ ! -f "$LIDAR_CONFIG_FILE" ]; then
+  echo "[错误] 雷达驱动配置不存在: $LIDAR_CONFIG_FILE" >&2
+  echo "[错误] 用 LIDAR_CONFIG_FILE=<路径> 指定。" >&2
+  exit 1
+fi
+
+# 驱动外参自检: 必须全零。非零时驱动自己会旋转一次点云, URDF 再转一次,
+# 而且 srm_robot_state_publisher_launch.py 会直接拒绝启动 —— 这里提前报错信息更清楚。
+if ! python3 -c '
+import json, sys
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+bad = [l.get("ip") for l in cfg["lidar_configs"] if any(l["extrinsic_parameter"].values())]
+sys.exit(1 if bad else 0)
+' "$LIDAR_CONFIG_FILE"; then
+  echo "[错误] 该配置的 extrinsic_parameter 不是全零: $LIDAR_CONFIG_FILE" >&2
+  echo "[错误] 驱动外参必须全零, 安装位姿由 --lidar-xyz / --lidar-rpy 承担," >&2
+  echo "[错误] 否则点云会被旋转两次。" >&2
   exit 1
 fi
 
@@ -341,8 +400,18 @@ NS_ARG=""
 [ -n "$NAMESPACE" ] && NS_ARG="namespace:=$NAMESPACE"
 
 # 1) Livox 雷达驱动: bringup_launch 不负责起驱动, 必须单独启动。
-#    参数取自 nav2_params.yaml 的 livox_ros_driver2 段 (含 user_config_path)。
-DRIVER_CMD="ros2 run livox_ros_driver2 livox_ros_driver2_node --ros-args --params-file $(q "$PARAMS_FILE")"
+#    这里有两件事必须显式处理, 否则驱动会"进程活着但一个点都不发", 而且不报错:
+#      a) 驱动代码里的节点名是 livox_driver_node, 而参数文件顶层键是 livox_ros_driver2。
+#         ROS 2 的 --params-file 按节点名匹配顶层键, 对不上就整段忽略
+#         => 用 -r __node:=livox_ros_driver2 把节点改名, 让参数生效;
+#      b) 参数文件里 user_config_path 写的是 $(find-pkg-share ...)/..., 这是 launch 专有
+#         替换语法, ros2 run 走的是 rcl 的参数解析, 不会展开它
+#         => 这里显式补一个绝对路径覆盖。
+#    参数取值仍来自 nav2 参数文件的 livox_ros_driver2 段 (xfer_format / frame_id / 频率)。
+DRIVER_CMD="ros2 run livox_ros_driver2 livox_ros_driver2_node --ros-args"
+DRIVER_CMD="$DRIVER_CMD -r __node:=livox_ros_driver2"
+DRIVER_CMD="$DRIVER_CMD --params-file $(q "$PARAMS_FILE")"
+DRIVER_CMD="$DRIVER_CMD -p user_config_path:=$(q "$LIDAR_CONFIG_FILE")"
 if [ -n "$NAMESPACE" ]; then
   DRIVER_CMD="$DRIVER_CMD -r __ns:=$(q "$NAMESPACE")"
 fi
@@ -356,6 +425,7 @@ fi
 #    偏移取自参数文件的 point_lio.mapping.extrinsic_T，安装位姿取自这里。
 RSP_CMD="ros2 launch pb2025_nav_bringup srm_robot_state_publisher_launch.py $NS_ARG use_sim_time:=False"
 RSP_CMD="$RSP_CMD params_file:=$(q "$PARAMS_FILE")"
+RSP_CMD="$RSP_CMD lidar_config:=$(q "$LIDAR_CONFIG_FILE")"
 RSP_CMD="$RSP_CMD lidar_xyz:=$(q "$LIDAR_XYZ")"
 RSP_CMD="$RSP_CMD lidar_rpy:=$(q "$LIDAR_RPY")"
 
@@ -364,6 +434,7 @@ NAV_CMD="ros2 launch pb2025_nav_bringup bringup_launch.py"
 NAV_CMD="$NAV_CMD $NS_ARG"
 NAV_CMD="$NAV_CMD slam:=$SLAM_ARG"
 NAV_CMD="$NAV_CMD use_pcd_localization:=$RELOC_ARG"
+NAV_CMD="$NAV_CMD use_lio_odometry:=$LIO_ARG"
 NAV_CMD="$NAV_CMD map:=$(q "$MAP_YAML")"
 NAV_CMD="$NAV_CMD prior_pcd_file:=$(q "$PRIOR_PCD")"
 NAV_CMD="$NAV_CMD params_file:=$(q "$PARAMS_FILE")"
@@ -379,31 +450,44 @@ NAV_CMD="$NAV_CMD map_to_odom_yaw:=$MAP_TO_ODOM_YAW"
 RVIZ_CMD="ros2 launch pb2025_nav_bringup rviz_launch.py $NS_ARG use_sim_time:=False rviz_config:=$(q "$RVIZ_CONFIG")"
 
 # 5) 手柄遥控
-JOY_CMD="ros2 launch pb2025_nav_bringup joy_teleop_launch.py $NS_ARG use_sim_time:=False joy_config_file:=$(q "$PARAMS_FILE")"
+#    joy_vel 默认是 cmd_vel, 但底盘串口节点订阅的是 cmd_vel_chassis(SRM 老工程命名),
+#    这里显式指过去, 否则手柄推杆车也不动。
+JOY_CMD="ros2 launch pb2025_nav_bringup joy_teleop_launch.py $NS_ARG use_sim_time:=False joy_vel:=cmd_vel_chassis joy_config_file:=$(q "$PARAMS_FILE")"
+
+# 6) 底盘串口通信: /cmd_vel 的唯一消费者, 把速度写进串口发给 C 板。
+#    协议是 SRM 实车那套 (帧头 0xA5 / 长度 2 字节 / 速度报文 0x0302 / 带 is_recovering),
+#    与官方 pb2025 的 0x5A 协议不同, 不能互换。启动必须走它自己的 launch:
+#    参数文件顶层键是 /standard_robot_pp_ros2, 而代码里的节点名是 StandardRobotPpRos2Node,
+#    两者能对上全靠 launch 里那行 name="standard_robot_pp_ros2"。
+#    直接 ros2 run 起的话参数不生效 (设备名空串/波特率 0), 串口根本打不开。
+CHASSIS_CMD="ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py"
 
 # ---- 打印配置摘要 ---------------------------------------------------------
-if [ "$START_SLAM" = "1" ]; then
+if [ "$SLAM_ON" = "1" ]; then
   MODE_DESC="SLAM 建图 (slam_toolbox 发布 map->odom)"
-elif [ "$START_RELOC" = "1" ]; then
+elif [ "$RELOC_ON" = "1" ]; then
   MODE_DESC="先验 PCD 重定位 (small_gicp 发布 map->odom)"
+elif [ "$LIO_ON" = "1" ]; then
+  MODE_DESC="纯 Point-LIO 里程计 + 静态地图 (静态 map->odom, 不用先验点云)"
 else
-  MODE_DESC="静态地图定位 (静态 map->odom)"
+  MODE_DESC="静态地图定位 (静态 map->odom, 无里程计源)"
 fi
 
 echo "==================== 实车导航启动配置 ===================="
 echo "  工作空间    : $WS_DIR"
 echo "  定位方式    : $MODE_DESC"
-if [ "$START_SLAM" = "1" ]; then
+if [ "$SLAM_ON" = "1" ]; then
   echo "  地图 (yaml) : $MAP_YAML  (SLAM 模式未加载)"
 else
   echo "  地图 (yaml) : $MAP_YAML"
 fi
-if [ "$START_RELOC" = "1" ]; then
+if [ "$RELOC_ON" = "1" ]; then
   echo "  先验 PCD    : $PRIOR_PCD"
 else
   echo "  先验 PCD    : $PRIOR_PCD  (未使用)"
 fi
 echo "  参数文件    : $PARAMS_FILE"
+echo "  雷达配置    : $LIDAR_CONFIG_FILE"
 if [ "$USE_ROBOT_STATE_PUB" = "1" ]; then
   echo "  车体模型    : srm_robot_state_publisher_launch.py (SRM)"
   echo "  雷达安装    : xyz=[$LIDAR_XYZ]  rpy=[$LIDAR_RPY]"
@@ -411,10 +495,20 @@ else
   echo "  车体模型    : 不启动 (假定其他模块已发布 URDF/TF)"
 fi
 echo "  命名空间    : ${NAMESPACE:-<根命名空间>}"
-echo "  slam        : $SLAM_ARG    use_pcd_localization: $RELOC_ARG"
+echo "  slam        : $SLAM_ARG    use_pcd_localization: $RELOC_ARG    use_lio_odometry: $LIO_ARG"
 echo "  组合节点    : $COMPOSITION_ARG"
-if [ "$START_RELOC" != "1" ] && [ "$START_SLAM" != "1" ]; then
+if [ "$USE_CHASSIS" = "1" ]; then
+  echo "  底盘串口    : standard_robot_pp_ros2.launch.py (SRM 协议, /dev/ttyACM0)"
+else
+  echo "  底盘串口    : 不启动"
+  echo "  [警告] 未启动底盘串口节点: /cmd_vel 将没有消费者, 车不会动。" >&2
+fi
+if [ "$RELOC_ON" != "1" ] && [ "$SLAM_ON" != "1" ]; then
   echo "  map->odom   : x=$MAP_TO_ODOM_X y=$MAP_TO_ODOM_Y yaw=$MAP_TO_ODOM_YAW"
+  if [ "$LIO_ON" != "1" ]; then
+    echo "  [警告] 未指定 --slam / --reloc / --lio 中任何一个: 没有里程计来源," >&2
+    echo "  [警告] odom->base_link 不会有人发布, 导航起不来。实车请用 --lio。" >&2
+  fi
 fi
 echo "========================================================="
 
@@ -453,6 +547,9 @@ add_step() {
 add_step "Livox 雷达驱动" '[l]ivox_ros_driver2_node' "$DRIVER_CMD"
 if [ "$USE_ROBOT_STATE_PUB" = "1" ]; then
   add_step "SRM 车体模型 (robot_state_publisher)" '[s]rm_robot_state_publisher_launch\.py' "$RSP_CMD"
+fi
+if [ "$USE_CHASSIS" = "1" ]; then
+  add_step "底盘串口 (SRM 协议)" '[s]tandard_robot_pp_ros2\.launch\.py' "$CHASSIS_CMD"
 fi
 add_step "导航栈 (Nav2)" '[b]ringup_launch\.py' "$NAV_CMD"
 if [ "$USE_RVIZ" = "1" ]; then

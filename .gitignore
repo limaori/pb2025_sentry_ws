@@ -23,6 +23,8 @@ sentry_*/
 
 *.log
 /log_diag/
+# 调试时把 ROS_LOG_DIR 指到这里(沙箱/临时运行), 内容是临时日志与抓取数据
+/.roslog/
 
 # 原始建图数据库（单文件极大，超 GitHub 100MB 限制，不入库）
 *.db3

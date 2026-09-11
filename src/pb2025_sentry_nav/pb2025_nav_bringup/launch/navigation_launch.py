@@ -32,6 +32,10 @@ def generate_launch_description():
     namespace = LaunchConfiguration("namespace")
     slam = LaunchConfiguration("slam")
     use_pcd_localization = LaunchConfiguration("use_pcd_localization")
+    # "纯 LIO"模式: Point-LIO 提供里程计, 但没有 GICP 重定位。
+    # 这套条件里的每一项在纯 LIO 下都必须按"有里程计"处理, 否则会出现
+    # TF 不发(车在图上不动)或地面分割订阅到没人发布的话题(避障失效)。
+    use_lio_odometry = LaunchConfiguration("use_lio_odometry")
     use_sim_time = LaunchConfiguration("use_sim_time")
     autostart = LaunchConfiguration("autostart")
     params_file = LaunchConfiguration("params_file")
@@ -80,6 +84,10 @@ def generate_launch_description():
     declare_use_pcd_localization_cmd = DeclareLaunchArgument(
         "use_pcd_localization", default_value="False",
         description="Whether prior-PCD Point-LIO localization provides navigation odometry",
+    )
+    declare_use_lio_odometry_cmd = DeclareLaunchArgument(
+        "use_lio_odometry", default_value="False",
+        description="Whether Point-LIO odometry (without GICP relocalization) provides navigation odometry",
     )
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
@@ -136,7 +144,7 @@ def generate_launch_description():
         remappings=[(
             "registered_scan",
             PythonExpression([
-                "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                "'velodyne_points' if not (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                 ") else 'registered_scan'",
             ]),
         )],
@@ -154,7 +162,7 @@ def generate_launch_description():
         remappings=[(
             "registered_scan",
             PythonExpression([
-                "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                "'velodyne_points' if not (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                 ") else 'registered_scan'",
             ]),
         )],
@@ -164,7 +172,7 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(["not ", use_composition])),
         actions=[
             Node(
-                condition=IfCondition(PythonExpression([slam, " or ", use_pcd_localization])),
+                condition=IfCondition(PythonExpression([slam, " or ", use_pcd_localization, " or ", use_lio_odometry])),
                 package="loam_interface",
                 executable="loam_interface_node",
                 name="loam_interface",
@@ -187,7 +195,7 @@ def generate_launch_description():
                 # retain this publisher for Point-LIO/PCD localization modes.
                 parameters=[configured_params, {
                     "publish_tf": PythonExpression([
-                        "'true' if (", slam, " or ", use_pcd_localization,
+                        "'true' if (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                         ") else 'false'",
                     ])
                 }],
@@ -196,11 +204,11 @@ def generate_launch_description():
                 remappings=[(
                     "odometry",
                     PythonExpression([
-                        "'odometry' if (", slam, " or ", use_pcd_localization,
+                        "'odometry' if (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                         ") else 'sensor_odometry'",
                     ]),
                 ), ("registered_scan", PythonExpression([
-                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                     ") else 'registered_scan'",
                 ]))],
             ),
@@ -317,7 +325,7 @@ def generate_launch_description():
                 name="sensor_scan_generation",
                 parameters=[configured_params, {
                     "publish_tf": PythonExpression([
-                        "'true' if (", slam, " or ", use_pcd_localization,
+                        "'true' if (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                         ") else 'false'",
                     ])
                 }],
@@ -326,11 +334,11 @@ def generate_launch_description():
                 remappings=[(
                     "odometry",
                     PythonExpression([
-                        "'odometry' if (", slam, " or ", use_pcd_localization,
+                        "'odometry' if (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                         ") else 'sensor_odometry'",
                     ]),
                 ), ("registered_scan", PythonExpression([
-                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization,
+                    "'velodyne_points' if not (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry,
                     ") else 'registered_scan'",
                 ]))],
             ),
@@ -407,7 +415,7 @@ def generate_launch_description():
 
     load_loam_interface_component = LoadComposableNodes(
         condition=IfCondition(PythonExpression([
-            use_composition, " and (", slam, " or ", use_pcd_localization, ")",
+            use_composition, " and (", slam, " or ", use_pcd_localization, " or ", use_lio_odometry, ")",
         ])),
         target_container=container_name_full,
         composable_node_descriptions=[
@@ -431,6 +439,7 @@ def generate_launch_description():
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_slam_cmd)
     ld.add_action(declare_use_pcd_localization_cmd)
+    ld.add_action(declare_use_lio_odometry_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)
