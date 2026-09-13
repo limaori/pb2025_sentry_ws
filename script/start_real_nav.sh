@@ -22,6 +22,9 @@
 #
 # 常用可选项:
 #   -m, --map NAME|PATH        地图名或路径 (默认 srm_site_01)
+#                              按名字查找顺序: <share>/map/reality/<name>.yaml,
+#                              ~/pb2025_sentry_ws/maps/<name>.yaml,
+#                              ~/pb2025_sentry_ws/maps/<name>/<name>.yaml
 #       --prior-pcd PATH       重定位先验点云, 默认 pcd/reality/<map>.pcd
 #       --slam / --reloc / --lio   见上, 三者互斥
 #       --map-to-odom X Y YAW  静态定位模式下 map->odom 初始位姿 (默认 2.30 2.00 0.0,
@@ -161,8 +164,15 @@ list_maps() {
   echo "可选地图（名称去掉 .yaml 后作为 --map 的值）:"
   echo
   local f name pcd_ok seen="" found=0
-  for f in "$SRC_SHARE_DIR"/map/reality/*.yaml "$WS_DIR"/maps/*.yaml; do
+  for f in "$SRC_SHARE_DIR"/map/reality/*.yaml "$WS_DIR"/maps/*.yaml "$WS_DIR"/maps/*/*.yaml; do
     [ -f "$f" ] || continue
+    # maps/<名字>/<名字>.yaml 这种子目录布局: 只认"目录名与 yaml 同名"的那份,
+    # 否则 rosbag 的 maps/<bag>/metadata.yaml 会被误当成地图列出来。
+    case "$f" in
+      "$WS_DIR"/maps/*/*)
+        [ "$(basename "$(dirname "$f")")" = "$(basename "$f" .yaml)" ] || continue
+        ;;
+    esac
     name="$(basename "$f" .yaml)"
     # 同名地图可能同时存在于两处, 只列一次
     case " $seen " in *" $name "*) continue ;; esac
@@ -181,6 +191,7 @@ list_maps() {
   fi
   echo
   echo "地图目录  : $SRC_SHARE_DIR/map/reality"
+  echo "          : $WS_DIR/maps  (也支持 $WS_DIR/maps/<名字>/<名字>.yaml)"
   echo "先验PCD目录: $SRC_SHARE_DIR/pcd/reality"
   echo "注意: --reloc 需要先验 PCD, 且该 PCD 必须已经在地图坐标系下。"
 }
@@ -198,6 +209,7 @@ resolve_map_yaml() {
     "$MAP_DIR/$name.yaml" \
     "$SRC_SHARE_DIR/map/reality/$name.yaml" \
     "$WS_DIR/maps/$name.yaml" \
+    "$WS_DIR/maps/$name/$name.yaml" \
     "$PACKAGE_DIR/map/simulation/$name.yaml"; do
     if [ -f "$cand" ]; then
       readlink -f "$cand"
