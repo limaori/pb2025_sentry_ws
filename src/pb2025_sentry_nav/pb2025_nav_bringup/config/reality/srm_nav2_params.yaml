@@ -348,7 +348,7 @@ bt_navigator:
   ros__parameters:
     use_sim_time: False
     global_frame: map
-    robot_base_frame: base_link_fake
+    robot_base_frame: base_link
     odom_topic: odometry
     bt_loop_duration: 10
     default_server_timeout: 100
@@ -464,7 +464,7 @@ local_costmap:
       update_frequency: 10.0
       publish_frequency: 5.0
       global_frame: odom
-      robot_base_frame: base_link_fake
+      robot_base_frame: base_link
       rolling_window: true
       width: 5
       height: 5
@@ -515,7 +515,7 @@ global_costmap:
       update_frequency: 5.0
       publish_frequency: 2.0
       global_frame: map
-      robot_base_frame: base_link_fake
+      robot_base_frame: base_link
       robot_radius: 0.33           # 车体半径 0.27m、轮子外廓约 0.33m; 取外廓值保证不蹭墙
       resolution: 0.05
       track_unknown_space: true
@@ -610,7 +610,7 @@ behavior_server:
       plugin: "nav2_behaviors/AssistedTeleop"
     local_frame: odom
     global_frame: map
-    robot_base_frame: base_link_fake
+    robot_base_frame: base_link
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
