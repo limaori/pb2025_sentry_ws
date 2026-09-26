@@ -75,7 +75,12 @@ private:
   // 移除了 robot_models_, debug_pub_map_
   // 移除了 imu_tf_broadcaster_
 
-  SendRobotCmdData send_robot_cmd_data_;
+  // [修复] 加 {} 做零初始化。
+  // 原为 `SendRobotCmdData send_robot_cmd_data_;` —— POD 成员无初始化, 内容不确定。
+  // 其中 is_recovering 字段只由 /robot_control 话题赋值, 而该话题当前【没有任何发布者】,
+  // 所以它是发送包里唯一不受控的字节(可能恰好非 0, 让下位机进入"回血中"而不执行速度指令;
+  // 且每次重启进程的值都可能不同 -> 表现成时好时坏)。
+  SendRobotCmdData send_robot_cmd_data_{};
   bool debug_print_hex_{false};
 
   void getParams();

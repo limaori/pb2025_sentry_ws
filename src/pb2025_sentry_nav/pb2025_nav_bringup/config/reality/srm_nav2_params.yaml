@@ -452,7 +452,25 @@ controller_server:
       teb_autosize: 1.0
       dt_ref: 0.3
       dt_hysteresis: 0.1
-      max_samples: 500
+      # ===== 关键: TEB 输出速度取第几个位姿 (实车原本没有此项, 用默认值 1) =====
+      # 语义(optimal_planner.cpp getVelocityCommand): 累加 TimeDiff 直到
+      #   dt >= dt_ref * control_look_ahead_poses, 再用 extractVelocity(
+      #   Pose(0), Pose(该索引), dt) 算速度。默认 1 = 只读带子第 0->1 段。
+      #
+      # 为什么必须加: 弹性带初始化是【全局路径逐点建位姿】(initTrajectoryToGoal),
+      # Theta* 的全局路径有时极密(仿真实测 357 点 / 间距 0.018m, 比 0.05 栅格还密),
+      # 于是带子起点几个位姿被挤在一起(实测前 4 点只占 1.3cm), 而速度恰好只读那段,
+      # |v| 只有 0.003~0.013 m/s —— 车"看着像卡住"完全不动。
+      #
+      # 仿真在线实测(同一套参数):
+      #   =1 -> 0.0078 m/s, 14 秒位移 0.0000 m  (卡死)
+      #   =3 -> 0.0129 m/s, 仍不动(没跨过挤压区)
+      #   =6 -> 0.2725 m/s, 14 秒位移 1.1092 m  ✅ 正常行驶
+      # 带子太短时会自动被 sizePoses()-1 夹住, 安全。
+      control_look_ahead_poses: 6
+      # [同步仿真] max_samples 500 -> 60: 上限卡住弹性带膨胀(仿真实测 255->61),
+      # 同时大幅降低单次优化耗时(控制环 2.3Hz -> 5Hz)。
+      max_samples: 60
       # [改动] 老代码为 False。老车用 NavFn, 而本车全局规划器是 Theta* 且没开
       # use_final_approach_orientation, 路径中间点的朝向全是 0(yaw=0, 即朝 map +X)。
       # False 会让 TEB 把这个假朝向当成局部目标朝向, 车会莫名其妙地拧着走, 故用
@@ -484,11 +502,18 @@ controller_server:
       free_goal_vel: False
 
       # ---------------- 障碍物 ----------------
-      # 注意: costmap_converter 只把 LETHAL 栅格转成障碍, costmap 膨胀层不计入,
-      # 所以 min_obstacle_dist 是"车体外缘 -> 障碍"的净余量, 会与膨胀半径叠加。
-      # 当前 0.33 + 0.27 = 0.60 m 中心净空, 比全局规划器的 0.33 保守很多:
-      # <1.2 m 的窄道 TEB 会过不去。要钻窄道就把它降到 0.10 ~ 0.15。
-      min_obstacle_dist: 0.27
+      # 注意: costmap_converter 只把 LETHAL 栅格转成障碍(源码硬编码 >=254, 无阈值参数),
+      # costmap 膨胀层不计入, 所以 min_obstacle_dist 是"车体外缘 -> 真墙"的净余量。
+      #
+      # [同步仿真] 0.27 -> 0.10。原因: 全局代价地图 robot_radius=0.33, Theta* 只保证
+      # 路径中心离墙 >=0.33m; 原值 0.27 要求 0.33+0.27=0.60m, 两者矛盾, TEB 拿到的
+      # 全局路径本身就违反它自己的约束, 只能一路妥协贴墙。
+      # 现在 0.33+0.10 = 0.43m, 与全局规划器给得起的净空接近。
+      #
+      # ⚠ 实车首跑注意: 0.10m 的车体外缘余量对真车偏紧, 且 0.43m < 本车
+      # inflation_radius(0.5m), 视觉上 TEB 会"开进膨胀带里"(那不是真障碍,
+      # 是软缓冲区, TEB 看不见它)。若首跑发现贴墙太近, 先加回 0.15~0.20 试。
+      min_obstacle_dist: 0.10
       inflation_dist: 0.6
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 1.0
@@ -505,8 +530,14 @@ controller_server:
       no_outer_iterations: 4
       optimization_activate: True
       optimization_verbose: False
-      penalty_epsilon: 0.1
-      obstacle_cost_exponent: 4.0
+      # [同步仿真] penalty_epsilon 0.1 -> 0.05: 它给安全边界留了一条 ±0.1m 的
+      # 模糊容忍带, 减半让 min_obstacle_dist 的边界更锐利。
+      penalty_epsilon: 0.05
+      # [同步仿真] obstacle_cost_exponent 4.0 -> 1.0。这是"贴墙"的主因之一:
+      # TEB 源码里 _error = min_dist * ((min_dist-dist)/min_dist)**exponent,
+      # 用 4.0 时浅侵入的代价被四次方压得几乎为零 —— 侵入 0.05m 时代价仅 0.03,
+      # TEB 等于"感觉不到"自己在往墙里挤。改回线性(1.0, 也是 TEB 默认值)。
+      obstacle_cost_exponent: 1.0
       weight_max_vel_x: 0.5
       weight_max_vel_y: 2.0         # [全向] 约束 max_vel_y(TEB 默认 2.0); 只对全向生效
       weight_max_vel_theta: 0.5
@@ -530,7 +561,9 @@ controller_server:
       weight_inflation: 0.2
       weight_dynamic_obstacle: 10.0
       weight_dynamic_obstacle_inflation: 0.2
-      weight_viapoint: 50.0
+      # [同步仿真] weight_viapoint 50 -> 20: 配合 global_plan_viapoint_sep=0.3
+      # (每 0.3m 一个 via point), 50 会把 TEB 死死拽在全局路径上, 没余量偏离贴墙的路径。
+      weight_viapoint: 20.0
       weight_adapt_factor: 2.0
 
       # ---------------- 多拓扑(同伦类)规划: 绕障的主要来源 ----------------
@@ -547,7 +580,10 @@ controller_server:
       h_signature_prescaler: 0.5
       h_signature_threshold: 0.1
       obstacle_heading_threshold: 0.45
-      switching_blocking_period: 0.0
+      # [同步仿真] 0.0 -> 1.0: "切换到一个新的同伦类之前必须等待多久"。
+      # 0.0 = 每个控制周期都能自由换类, TEB 会在两条拓扑路径之间反复横跳
+      # (仿真实测表现就是 RViz 里"路径在这两种之间来回跳")。设 1 秒加冷静期。
+      switching_blocking_period: 1.0
       viapoints_all_candidates: True
       delete_detours_backwards: True
       max_ratio_detours_duration_best_duration: 3.0
@@ -776,8 +812,22 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.5, 0.5, 1.0]      # 硬上限: 首跑限速, 跑通后再放
-    min_velocity: [-2.5, -2.5, -3.0]
+    # ===== 硬钳位: 禁止导航控制底盘自转 (ω 恒为 0) =====
+    # 需求: 局部规划器只控制 vx/vy, 不控制 wz。
+    # 做法: 把 yaw 分量的上下限【都】设成 0 —— 硬钳位, 在 TEB 优化器【之外】,
+    #       无论 TEB 优化出什么 ω 都出不去, 且不与优化器较劲。
+    # 为什么不用 TEB 的 max_vel_theta=0: 它的惩罚函数 penaltyBoundToInterval
+    #   在 a=0 时代价最低点在 ω=+epsilon(约 +0.05) 而非 0, 且负方向被不对称重罚,
+    #   会给优化器引入"偏爱小幅正转"的偏置(见 g2o_types/penalties.h)。
+    # 适用理由: 哨兵底盘本就该由云台独立瞄准, 导航不该转底盘;
+    #   原 OmniPidPursuit 也是 enable_rotation: false(从不发自转)。
+    # 仿真实测: 自转 32 deg/s -> 0.0 deg/s, 全链路 ω 精确为 0。
+    # 代价: TEB 内部仍按"可旋转"规划, 而底盘不执行 -> 存在轻微模型不一致,
+    #   仿真实测不影响行驶(车正常走)。若实车发现转向相关异常, 把第 3 个分量
+    #   改回 1.0 / -3.0 即可恢复。
+    # 注意: behavior_server 的 Spin 恢复行为不走本话题, 不受影响。
+    max_velocity: [0.5, 0.5, 0.0]      # 硬上限: 首跑限速, 跑通后再放 (yaw 钳 0)
+    min_velocity: [-2.5, -2.5, 0.0]    # yaw 下限同样钳 0
     max_accel: [1.0, 1.0, 1.5]         # 随限速等比降低
     max_decel: [-1.0, -1.0, -1.5]      # 随限速等比降低
     odom_topic: "odometry"

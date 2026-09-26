@@ -173,7 +173,10 @@ void StandardRobotPpRos2Node::serialPortProtect()
     RCLCPP_ERROR(get_logger(), "Open serial port failed : %s", ex.what());
     is_usb_ok_ = false;
   }
-  is_usb_ok_ = true;
+  // [修复] 原来这里有一行无条件 `is_usb_ok_ = true;`, 会把上面 catch 里的 false 覆盖掉。
+  // 后果: 端口一旦打开失败(或之后失效), 下面的重试分支 `if (!is_usb_ok_)` 永远进不去,
+  // 于是【永久静默失败】—— 不再重试、不再报错、也不再自愈(拔插 USB 后必须重启节点)。
+  // 删除该行, 让打开失败时能每秒重试并打印错误。
   std::this_thread::sleep_for(std::chrono::milliseconds(USB_PROTECT_SLEEP_TIME));
 
   while (rclcpp::ok()) {
@@ -632,13 +635,22 @@ void StandardRobotPpRos2Node::sendData()
 
       std::vector<uint8_t> send_data = toVector(local_data_copy);
 
-      // // --- DEBUG: 打印 CRC16 和 Hex 数据 ---
-      // uint16_t crc16_value = (static_cast<uint16_t>(send_data[send_data.size() - 1]) << 8) |
-      //                        send_data[send_data.size() - 2];
-
-      // RCLCPP_INFO(get_logger(), "Send CRC16: 0x%04X, TotalLen: %lu", crc16_value, send_data.size());
-      // printHex("SEND", ID_ROBOT_CMD, send_data);
-      // // -----------------------------------
+      // [诊断] 打开 debug_print_hex 时打印实际发出去的整包 hex。
+      // 原来是注释状态, 于是 debug_print_hex 只对接收端(RECV)生效, 看不到发送内容。
+      // 排查"软件链路全对但下位机没反应"时, 这行能直接区分
+      // "字节根本没发出去" 和 "发了但下位机不认"。
+      // 关闭方式: 把 config/standard_robot_pp_ros2.yaml 里 debug_print_hex 设回 false
+      // (本打印受该参数控制, 平时不影响性能)。
+      if (debug_print_hex_) {
+        uint16_t crc16_value = (static_cast<uint16_t>(send_data[send_data.size() - 1]) << 8) |
+                               send_data[send_data.size() - 2];
+        RCLCPP_INFO(
+          get_logger(), "SEND len=%zu crc16=0x%04X vx=%.3f vy=%.3f wz=%.3f recovering=%u",
+          send_data.size(), crc16_value,
+          local_data_copy.speed_vector.vx, local_data_copy.speed_vector.vy,
+          local_data_copy.speed_vector.wz, local_data_copy.is_recovering);
+        printHex("SEND", ID_ROBOT_CMD, send_data);
+      }
 
       serial_driver_->port()->send(send_data);
     } catch (const std::exception & ex) {
