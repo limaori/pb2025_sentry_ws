@@ -408,15 +408,19 @@ controller_server:
   ros__parameters:
     use_sim_time: False
     odom_topic: odometry
-    # [TEB] 由 20.0 降到 10.0: TEB 每个控制周期都要跑一次 g2o 优化(且开了多拓扑规划),
-    # 20 Hz 在车载机上大概率跟不上, 会刷 "Control loop missed its desired rate" 并导致抖动。
-    # 老工程跑的是 5.0。CPU 有余量可往上加, 卡顿就降到 5.0。
-    controller_frequency: 10.0
+    # [TEB] 20.0 -> 10.0 -> 5.0: TEB 每个控制周期都要跑一次 g2o 优化(且开了多拓扑规划),
+    # 20Hz/10Hz 都跟不上。老工程用同一套 TEB 参数跑的就是 5.0Hz。
+    # 本机实测「配置 10Hz 只跑出 2.4Hz」, 但那是弹性带塌缩成 262 点的病态状态
+    # (见 grid 打结问题) + Gazebo 抢 CPU 时的最坏下限; 改全向后带子正常会快很多。
+    # 重启后验证: ros2 topic hz /red_standard_robot1/cmd_vel_controller
+    #   若明显低于 5Hz 且日志刷 "Control loop missed its desired rate", 就再降到 3.0
+    controller_frequency: 5.0
     min_x_velocity_threshold: 0.001
-    # 注意: 这个阈值作用在【里程计反馈的 vy】上(低于阈值直接置 0), 不是输出限幅。
-    # 当前 TEB 走非全向(weight_kinematics_nh=1000), vy 本来就≈0 所以无影响;
-    # 若以后把 TEB 改成全向, 必须把它降到 ~0.05, 否则横向速度反馈会被吃掉。
-    min_y_velocity_threshold: 0.5
+    # 这个阈值作用在【里程计反馈的 vy】上(低于阈值直接置 0), 不是输出限幅。
+    # 原来是 0.5 —— 那是 nav2 模板给差速车留的默认值。TEB 现在走全向,
+    # 而 vy 上限也正好是 0.5, 若仍用 0.5 则 abs(vy) > 0.5 永不成立,
+    # 反馈横向速度会被全部吃掉, 所以必须降到 0.05。
+    min_y_velocity_threshold: 0.05
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugins: ["progress_checker"]
@@ -464,8 +468,14 @@ controller_server:
 
       # ---------------- 机器人运动学 ----------------
       max_vel_x: 1.0                # [改动] 老代码 0.26; 本次取 1.0 m/s
+      # 注意: 实车 velocity_smoother 的 max_velocity 是 [0.5, 0.5, 1.0],
+      # 所以输出到这里实际还会被削到 0.5 m/s, 不会真的跑 1.0。
+      max_vel_y: 0.5                # [全向] TEB 默认 0.0(等于禁用横移), 必须显式打开;
+                                    # 取值与 velocity_smoother 的 vy 上限 0.5 对齐
       max_vel_theta: 1.0
       acc_lim_x: 2.5
+      acc_lim_y: 1.0                # [全向] 默认 0.5; 与 velocity_smoother 的 y 向
+                                    # max_accel=1.0 对齐
       acc_lim_theta: 3.2
       footprint_model:
         type: "circular"
@@ -498,13 +508,21 @@ controller_server:
       penalty_epsilon: 0.1
       obstacle_cost_exponent: 4.0
       weight_max_vel_x: 0.5
+      weight_max_vel_y: 2.0         # [全向] 约束 max_vel_y(TEB 默认 2.0); 只对全向生效
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 0.5
+      weight_acc_lim_y: 1.0         # [全向] 约束 acc_lim_y(TEB 默认 1.0); 只对全向生效
       weight_acc_lim_theta: 10.5
-      # 非全向(差速式)约束: TEB 会输出 angular.z 让底盘转向行进方向。
-      # 这点和原来的 Omni PID(enable_rotation: false, 底盘从不自转)行为不同, 首跑注意。
-      weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 3.0
+      # ===== 全向模式(只平移, 不控朝向) =====
+      # 原来 1000.0 是非全向约束: 强迫朝向必须对齐行进方向, TEB 会输出 angular.z
+      # 让底盘自转。现在置 0, TEB 不再约束朝向、只做平移, 与全向轮底盘以及
+      # 原来 OmniPidPursuit(enable_rotation: false, 底盘从不自转) 的思路一致。
+      #
+      # 这份用的是 base_link(真实底盘系), TEB 读到的是真实朝向。
+      # (仿真那份原先用 gimbal_yaw_fake 合成系导致 TEB 打结, 现已改为 base_footprint
+      #  与本文件 base_link 结构 1:1 对齐。)
+      weight_kinematics_nh: 0.0
+      weight_kinematics_forward_drive: 0.0
       weight_kinematics_turning_radius: 1.0
       weight_optimaltime: 1.0
       weight_shortest_path: 0.0

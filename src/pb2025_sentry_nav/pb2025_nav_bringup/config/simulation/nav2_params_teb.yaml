@@ -161,6 +161,13 @@ fake_vel_transform:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     odom_topic: "odometry"                             # 输入里程计话题
+    # [已回退] 这里曾改成 base_footprint/base_footprint_fake 想对齐实车, 但那是错的:
+    # fake_vel_transform 会把 cmd_vel 按【底盘偏航】旋转(见该节点源码 transformVelocity),
+    # 这个转换成立的【前提】是导航系就是 gimbal_yaw_fake。
+    # 一旦把代价地图改成 base_footprint(真实底盘系), nav2 输出的 cmd_vel 已经在底盘系里了,
+    # 再转一次就是双重旋转 —— 实测两者夹角正好 = -yaw(机器人偏航 -105.2° 时,
+    # nav2 输出(0.717,-0.779) 到 底盘收到(0.564,0.897) 恰好转了 105.2°),
+    # 于是车越走越偏。故恢复为上游自洽取值。
     robot_base_frame: "gimbal_yaw"                     # 原始机器人坐标系
     fake_robot_base_frame: "gimbal_yaw_fake"           # 用于导航的虚拟机器人坐标系
     input_cmd_vel_topic: "cmd_vel_nav2_result"         # Nav2控制器输出速度话题
@@ -288,6 +295,8 @@ bt_navigator:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     global_frame: map                                   # 全局坐标系
+    # [已回退] base_footprint -> gimbal_yaw_fake: 该转换由 fake_vel_transform 负责,
+    # 导航系必须是 fake 系, 否则 cmd_vel 会被二次旋转(详见上方 fake_vel_transform 注释)
     robot_base_frame: gimbal_yaw_fake                   # 导航机器人坐标系
     odom_topic: odometry                                # 输入里程计话题
     bt_loop_duration: 10                                # 行为树循环周期（毫秒）
@@ -348,10 +357,18 @@ controller_server:
   ros__parameters:
     use_sim_time: True                                  # 是否使用仿真时钟
     odom_topic: odometry                                # 输入里程计话题
-    # [TEB] 20.0 -> 10.0, 原因见实车 srm_nav2_params.yaml 里的同名注释
-    controller_frequency: 10.0                          # 控制器运行频率（Hz）
+    # [TEB] 20.0 -> 5.0: TEB 每个控制周期都要跑一次 g2o 优化(还开了多拓扑),
+    # 20Hz/10Hz 都跟不上。老工程(srm_auto_sentry)用同一套 TEB 参数跑的就是 5.0Hz。
+    # 判断依据: 本机实测「配置 10Hz 时只跑出 2.4Hz」, 但那是弹性带塌缩成 262 点
+    # 的病态状态 + Gazebo 抢 CPU 时的数值, 属于最坏情况下限。
+    # 改成全向(不控朝向)后带子正常, 应该远快于这个下限。
+    # 重启后验证: ros2 topic hz /red_standard_robot1/cmd_vel_controller
+    #   若明显低于 5Hz 且日志刷 "Control loop missed its desired rate", 就再降到 3.0
+    controller_frequency: 5.0                           # 控制器运行频率（Hz）
     min_x_velocity_threshold: 0.001                     # X速度死区阈值（米/秒）
-    min_y_velocity_threshold: 0.5                       # Y速度死区阈值（米/秒）
+    # 作用在【里程计反馈的 vy】上(低于阈值置 0)。TEB 已改为全向, 必须降到 0.05,
+    # 否则横向速度反馈会被全部吃掉(原 0.5 是 nav2 给差速车的模板默认值)。
+    min_y_velocity_threshold: 0.05                      # Y速度死区阈值（米/秒）
     min_theta_velocity_threshold: 0.001                 # 角速度死区阈值（弧度/秒）
     failure_tolerance: 0.3                              # 控制器允许的失败容差
     progress_checker_plugins: ["progress_checker"]     # 进度检查器列表
@@ -371,10 +388,10 @@ controller_server:
     # 目的是在上实车之前先验证 TEB 能不能规划/绕障/跑得动。
     # 用法见下方说明; 默认仿真配置 nav2_params.yaml 没有被改动。
     #
-    # 注意仿真与实车的两处差异(本文件保持仿真的原有取值, 不要照抄实车的):
-    #   1) local_costmap.robot_base_frame 仿真= gimbal_yaw_fake, 实车= base_link
-    #   2) local_costmap.robot_radius      仿真= 0.2,              实车= 0.33
+    # 注意仿真与实车仍有的一处差异(本文件保持仿真的原有取值, 不要照抄实车的):
+    #   local_costmap.robot_radius 仿真= 0.2, 实车= 0.33
     # 所以 footprint_model.radius 这里必须用 0.2 与仿真代价地图保持一致。
+    # (坐标系已对齐: 见本文件上方 fake_vel_transform / costmap 的 [对齐实车] 注释)
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
       odom_topic: odometry          # costmap_converter 用它估计动态障碍物速度
@@ -383,7 +400,31 @@ controller_server:
       teb_autosize: 1.0
       dt_ref: 0.3
       dt_hysteresis: 0.1
-      max_samples: 500
+      # ===== 关键修复: TEB 输出速度取第几个位姿 =====
+      # 语义(optimal_planner.cpp getVelocityCommand): 累加 TimeDiff 直到
+      #   dt >= dt_ref * control_look_ahead_poses, 然后用 extractVelocity(
+      #   Pose(0), Pose(该索引), dt) 算速度。
+      # 默认值 1 = 只用 Pose(0)->Pose(1) 这一段。
+      #
+      # 为什么必须调大: 弹性带初始化是【全局路径逐点建位姿】(initTrajectoryToGoal),
+      # 而 Theta* 输出的全局路径有时极密(实测 357 点 / 间距 0.018m, 比 0.05 的
+      # 栅格还密)。于是带子起点几个位姿被挤在一起(实测前 4 点只占 1.3cm),
+      # 而速度恰好只读那一段 -> |v| 只有 0.003~0.013 m/s, 车"看着像卡住"完全不动。
+      #
+      # 实测(仿真在线验证):
+      #   =1 -> 平移速度 0.0078 m/s, 14 秒位移 0.0000 m  (卡死)
+      #   =3 -> 0.0129 m/s, 仍不动 (没跨过挤压区)
+      #   =6 -> 0.2725 m/s, 14 秒位移 1.1092 m  ✅ 正常行驶
+      #
+      # 副作用: 速度取自更靠前的位姿, 响应略变钝; 但 6 相对 dt_ref=0.3s 只有约
+      # 1.8 秒前瞻, 影响很小。带子太短时会自动被 sizePoses()-1 夹住, 安全。
+      control_look_ahead_poses: 6
+      # [改动] max_samples 500 -> 60。实测弹性带塌缩到 255 个点(92% 堆在机器人身上),
+      # TEB 因此输出 vx=vy=0、只发 wz=-1.0, 车原地打转且无法自恢复。
+      # 500 允许带子无限膨胀, 而带子越大优化越慢(实测控制环只有 2.3Hz, 配置 5Hz),
+      # 越慢越追不上 -> "停住 -> 带子堆积 -> 更慢 -> 更停住" 的死循环。
+      # 按 dt_ref=0.3s 算, 60 个点 = 18 秒轨迹, 相对 3m 前瞻(约 6 秒)绰绰有余。
+      max_samples: 60
       # 本车全局规划器是 Theta* 且未开 use_final_approach_orientation,
       # 路径中间点朝向恒为 0, 故必须让 TEB 自己按几何推算目标朝向。
       global_plan_overwrite_orientation: True
@@ -397,8 +438,10 @@ controller_server:
 
       # ---------------- 机器人运动学 ----------------
       max_vel_x: 1.0                # 与实车保持一致, 便于把仿真结论外推
+      max_vel_y: 1.0                # [全向] TEB 默认是 0.0(等于禁用横移), 必须显式打开
       max_vel_theta: 1.0
       acc_lim_x: 2.5
+      acc_lim_y: 2.5                # [全向] 默认 0.5, 与 acc_lim_x 对齐
       acc_lim_theta: 3.2
       footprint_model:
         type: "circular"
@@ -407,9 +450,16 @@ controller_server:
       free_goal_vel: False
 
       # ---------------- 障碍物 ----------------
-      # costmap_converter 只把 LETHAL 栅格转成障碍, 膨胀层不计入,
-      # 所以 min_obstacle_dist 是"车体外缘 -> 障碍"的净余量, 与膨胀半径叠加。
-      min_obstacle_dist: 0.27
+      # costmap_converter 只把 LETHAL 栅格转成障碍(源码里是硬编码 >=254, 无阈值参数),
+      # 膨胀层不计入, 所以 TEB 完全看不见代价地图那 0.7m 的膨胀缓冲区。
+      # min_obstacle_dist 是"车体外缘 -> 致命栅格"的净余量。
+      #
+      # [改动] 0.27 -> 0.10。原因: 全局代价地图 robot_radius=0.2, Theta* 只保证
+      # 路径中心离墙 >=0.2m; 而原值要求 0.2+0.27=0.47m, 两者矛盾 —— TEB 拿到的
+      # 全局路径本身就违反它自己的约束, 只能一路妥协贴墙(实测车中心最近到 0.226m)。
+      # 现在 0.2+0.10=0.30m, 与全局规划器给得起的净空相容。
+      # 想要更保守就把全局代价地图的 robot_radius 一起提到 0.3~0.35(窄道会过不去)。
+      min_obstacle_dist: 0.10
       inflation_dist: 0.6
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 1.0
@@ -426,15 +476,31 @@ controller_server:
       no_outer_iterations: 4
       optimization_activate: True
       optimization_verbose: False
-      penalty_epsilon: 0.1
-      obstacle_cost_exponent: 4.0
+      # [改动] penalty_epsilon 0.1 -> 0.05: 它给安全边界留了一条 ±0.1m 的模糊容忍带,
+      # 减半让 min_obstacle_dist 的边界更锐利。
+      penalty_epsilon: 0.05
+      # [改动] obstacle_cost_exponent 4.0 -> 1.0。这是"贴墙"的主因之一:
+      # TEB 源码里 _error = min_dist * ((min_dist-dist)/min_dist)**exponent,
+      # 用 4.0 时浅侵入的代价被四次方压得几乎为零 —— 侵入 0.05m 时代价仅 0.03,
+      # TEB 等于"感觉不到"自己在往墙里挤。改回线性(1.0, 也是 TEB 默认值)。
+      obstacle_cost_exponent: 1.0
       weight_max_vel_x: 0.5
+      weight_max_vel_y: 2.0         # [全向] 约束 max_vel_y(TEB 默认 2.0); 只对全向生效
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 0.5
+      weight_acc_lim_y: 1.0         # [全向] 约束 acc_lim_y(TEB 默认 1.0); 只对全向生效
       weight_acc_lim_theta: 10.5
-      # 非全向(差速式): TEB 会输出 angular.z 让底盘转向行进方向
-      weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 3.0
+      # ===== 全向模式(只平移, 不控朝向) =====
+      # 原来 1000.0 是非全向约束: 强迫 robot 朝向必须对齐行进方向。
+      # 打结的成因是: TEB 去控朝向, 而它读朝向的来源(代价地图 robot_base_frame)
+      # 当时是 gimbal_yaw_fake —— 一个由 fake_vel_transform 用「机器人自身里程计
+      # 偏航」反向算出来的合成坐标系, 不是真实底盘系, 于是朝向永远对不齐,
+      # 角速度顶死上限原地打转, 弹性带塌缩成"结"。
+      # 现在本文件的坐标系已改为 base_footprint(真实底盘系, 与实车 base_link 对应),
+      # 同时把非全向约束置 0: TEB 不再约束朝向、只做平移, 与全向轮底盘以及
+      # 原来 OmniPidPursuit(enable_rotation: false) 的思路一致。
+      weight_kinematics_nh: 0.0
+      weight_kinematics_forward_drive: 0.0
       weight_kinematics_turning_radius: 1.0
       weight_optimaltime: 1.0
       weight_shortest_path: 0.0
@@ -442,10 +508,22 @@ controller_server:
       weight_inflation: 0.2
       weight_dynamic_obstacle: 10.0
       weight_dynamic_obstacle_inflation: 0.2
-      weight_viapoint: 50.0
+      # [改动] weight_viapoint 50 -> 20: 配合 global_plan_viapoint_sep=0.3(每 0.3m
+      # 一个 via point), 50 会把 TEB 死死拽在全局路径上, 没余量偏离贴墙的路径。
+      weight_viapoint: 20.0
       weight_adapt_factor: 2.0
 
       # ---------------- 多拓扑(同伦类)规划: 绕障的主要来源 ----------------
+      # 已改回 True (曾是诊断实验关掉的)。
+      # 诊断结论: 关掉它【并没有】解决塌缩/卡死 —— 所以问题不在同伦类规划器。
+      # 真正的根因是 control_look_ahead_poses 默认 1(只读带子第 0->1 段),
+      # 而密全局路径把带子起点挤成一团, 导致输出速度≈0。见该参数处的注释。
+      #
+      # 重开的注意点: 开启时每周期要优化 4 条轨迹, CPU 约为单条的 4 倍。
+      # 之前实测控制环掉到 2.3Hz(配置 5Hz)时带子已膨胀到 255 点;
+      # 现在 max_samples=60 把带子限小了, 单次优化便宜很多。
+      # 重启后务必确认: ros2 topic hz /red_standard_robot1/cmd_vel_controller
+      #   仍接近 5Hz。若明显掉帧, 先降 max_number_classes(4->2) 再考虑关掉本项。
       enable_homotopy_class_planning: True
       enable_multithreading: True
       max_number_classes: 4
@@ -459,7 +537,10 @@ controller_server:
       h_signature_prescaler: 0.5
       h_signature_threshold: 0.1
       obstacle_heading_threshold: 0.45
-      switching_blocking_period: 0.0
+      # [改动] 0.0 -> 1.0。语义: "切换到一个新的同伦类之前必须等待多久"。
+      # 0.0 = 每个控制周期都可以自由换类, 于是 TEB 会在两条拓扑路径之间反复横跳,
+      # 表现就是 RViz 里"路径在这两种之间来回跳"。设成 1 秒给切换加了冷静期。
+      switching_blocking_period: 1.0
       viapoints_all_candidates: True
       delete_detours_backwards: True
       max_ratio_detours_duration_best_duration: 3.0
@@ -483,7 +564,7 @@ local_costmap:
       update_frequency: 10.0                              # 代价地图更新频率（Hz）
       publish_frequency: 5.0                              # 代价地图发布频率（Hz）
       global_frame: odom                                  # 局部地图坐标系
-      robot_base_frame: gimbal_yaw_fake                   # 机器人坐标系
+      robot_base_frame: gimbal_yaw_fake                   # 机器人坐标系(与 fake_vel_transform 配套)
       rolling_window: true                                # 是否使用跟随机器人移动的窗口
       width: 5                                             # 局部地图宽度（米）
       height: 5                                            # 局部地图高度（米）
@@ -533,7 +614,7 @@ global_costmap:
       update_frequency: 5.0                               # 全局地图更新频率（Hz）
       publish_frequency: 2.0                              # 全局地图发布频率（Hz）
       global_frame: map                                    # 全局地图坐标系
-      robot_base_frame: gimbal_yaw_fake                   # 机器人坐标系
+      robot_base_frame: gimbal_yaw_fake                   # 机器人坐标系(与 fake_vel_transform 配套)
       robot_radius: 0.2                                   # 机器人圆形碰撞半径（米）
       resolution: 0.05                                    # 地图分辨率（米）
       plugins: ["static_layer", "intensity_voxel_layer", "inflation_layer"] # 启用的代价地图图层
@@ -632,7 +713,7 @@ behavior_server:
       plugin: "nav2_behaviors/AssistedTeleop"             # 辅助遥控插件
     local_frame: odom                                      # 局部行为坐标系
     global_frame: map                                      # 全局行为坐标系
-    robot_base_frame: gimbal_yaw_fake                      # 机器人坐标系
+    robot_base_frame: gimbal_yaw_fake                      # 机器人坐标系(与 fake_vel_transform 配套)
     transform_tolerance: 0.1                               # TF变换容差（秒）
     simulate_ahead_time: 2.0                               # 行为碰撞前向模拟时间（秒）
     max_rotational_vel: 1.0                                # 最大旋转速度（弧度/秒）
@@ -660,8 +741,19 @@ velocity_smoother:
     smoothing_frequency: 20.0                              # 速度平滑频率（Hz）
     scale_velocities: False                                # 超限时是否按比例缩放各速度分量
     feedback: "OPEN_LOOP"                                 # 平滑器反馈方式：开环
-    max_velocity: [2.5, 2.5, 3.0]                          # 最大速度[x,y,yaw]
-    min_velocity: [-2.5, -2.5, -3.0]                       # 最小速度[x,y,yaw]
+    # ===== 硬钳位: 禁止导航控制底盘自转 (ω 恒为 0) =====
+    # 需求: 局部规划器只控制 vx/vy, 不控制 wz。
+    # 做法: 把 yaw 分量的上下限【都】设成 0 —— 这是硬钳位, 在 TEB 优化器【之外】,
+    #       无论 TEB 优化出什么 ω 都出不去, 且不与优化器较劲。
+    # 为什么不用 TEB 的 max_vel_theta=0: 它的惩罚函数 penaltyBoundToInterval
+    #   在 a=0 时代价最低点在 ω=+epsilon(约 +0.05) 而不是 0, 且负方向被不对称重罚,
+    #   会给优化器引入"偏爱小幅正转"的偏置。见 g2o_types/penalties.h。
+    # 适用理由: 哨兵底盘本就该由云台独立瞄准, 导航不该转底盘;
+    #   原 OmniPidPursuit 也是 enable_rotation: false(从不发自转)。
+    # 恢复自转: 把下面两行的第 3 个分量改回 3.0 / -3.0
+    # 注意: behavior_server 的 Spin 恢复行为不走本话题, 不受影响。
+    max_velocity: [2.5, 2.5, 0.0]                          # 最大速度[x,y,yaw]
+    min_velocity: [-2.5, -2.5, 0.0]                        # 最小速度[x,y,yaw]
     max_accel: [4.5, 4.5, 5.0]                             # 最大加速度[x,y,yaw]
     max_decel: [-4.5, -4.5, -5.0]                          # 最大减速度[x,y,yaw]
     odom_topic: "odometry"                                # 里程计反馈话题
