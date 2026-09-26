@@ -505,7 +505,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
-        inflation_radius: 0.7
+        inflation_radius: 0.5           # 障碍膨胀半径(m); 原 0.7, 调小以便钻窄道
       always_send_full_costmap: False
 
 global_costmap:
@@ -551,7 +551,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
-        inflation_radius: 0.7
+        inflation_radius: 0.5           # 障碍膨胀半径(m); 原 0.7, 调小以便钻窄道
       always_send_full_costmap: False
 
 # yaml_filename 由 launch 传入
