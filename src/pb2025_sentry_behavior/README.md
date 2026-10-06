@@ -58,39 +58,6 @@ ros2 launch pb2025_sentry_behavior pb2025_sentry_behavior_launch.py
 
 ### 3.1 Action
 
-#### CalculateAttackPose
-
-![attack_behavior](https://raw.githubusercontent.com/LihanChen2004/picx-images-hosting/master/attack_behavior.99th7cowh5.gif)
-
-`CalculateAttackPose` 动作节点用于计算并输出进攻坐标，该节点基于敌方坐标和全局代价地图生成候选点，过滤出可行点，并选择最佳攻击点。
-
-Input Ports:
-
-- `costmap_port`：类型为 `nav_msgs::msg::OccupancyGrid`，表示全局代价地图。
-- `tracker_port`：类型为 `auto_aim_interfaces::msg::Target`，表示视觉估计得到的目标状态信息。Related repo: [armor_tracker](https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_rm_vision/tree/main/armor_tracker)
-
-Output Ports:
-
-- `goal`：类型为 `geometry_msgs::msg::PoseStamped`，表示发送给导航系统的目标姿态。
-
-Parameters:
-
-- `attack_radius`：以目标位置为圆心的半径，default: 3.0。
-- `num_sectors`：划分扇区数量，default: 36。
-- `cost_threshold`：代价阈值，default: 50。
-- `robot_base_frame`：机器人基坐标系，default: "chassis"。
-- `transform_tolerance`：查询 tf 超时时间，default: 0.5。
-- `visualize`：是否启用可视化，default: false。
-
-##### 功能描述
-
-1. **transformToCostmapFrame**：将敌方位置转换到代价地图框架。
-2. **generateCandidatePoints**：生成候选攻击点。
-3. **filterFeasiblePoints**：过滤出可行的攻击点。
-4. **selectBestPoint**：选择最佳攻击点。
-5. **createAttackPose**：创建攻击姿态。
-6. **createVisualizationMarkers**：创建可视化标记。
-
 #### PubTwist
 
 以 `geometry_msgs/msg/Twist` 的形式发布速度，用于控制底盘运动。
@@ -119,15 +86,6 @@ Parameters:
 - `gimbal_yaw`：输出敌方可能的角度位置
 
 如果检测到装甲板被击中，则返回 `SUCCESS`，并输出相应的云台角度；否则返回 `FAILURE`。
-
-#### IsDetectEnemy
-
-通过视觉模块判断是否感知到敌方。
-
-- `armor_id`：预期的装甲 ID 列表。可以是多个数字，用 `;` 分隔
-- `max_distance`：敌方目标的最大距离
-
-如果视觉模块感知到的敌方在 `armor_id` 列表中，且距离小于 `max_distance`，则返回 SUCCESS，否则返回 FAILURE。
 
 #### IsGameStatus
 

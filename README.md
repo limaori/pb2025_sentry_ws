@@ -4,18 +4,17 @@
 
 ## 1. 项目介绍
 
-深圳北理莫斯科大学北极熊战队 哨兵机器人 ROS 工作空间，包含串口通信、视觉、导航、决策、仿真模块。
+深圳北理莫斯科大学北极熊战队哨兵机器人 ROS 工作空间，包含串口通信、导航、行为决策和仿真模块。
 
 ## 2. Quick Start
 
-SRM 实车 MID360 建图（复用 `/home/srm/srm_auto_sentry` 的机器人模型）：见 [实车 SLAM 建图](./实车SLAM建图.md)，启动入口为 `bash script/start_real_slam.sh`。
+SRM 实车 MID360 建图启动入口为 `bash script/start_real_slam.sh`，雷达配置见 [MID360 使用指南](./mid360使用指南.md)。
 
 ### 2.1 Setup Environment
 
 - Ubuntu 22.04
 - ROS: [Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - Ignition: [Fortress](https://gazebosim.org/docs/fortress/install_ubuntu/)
-- Install [OpenVINO 2023.3](https://docs.openvino.ai/2025/get-started/install-openvino.html?PACKAGE=OPENVINO_BASE&VERSION=v_2023_3_0&OP_SYSTEM=LINUX&DISTRIBUTION=APT)
 - Install [small_icp](https://github.com/koide3/small_gicp):
 
     ```bash
@@ -68,18 +67,19 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --paralle
 
 ### 2.4 Running
 
-将会运行串口通信、视觉、导航、决策模块，参数均读取自配置文件 [node_params](./src/pb2025_sentry_bringup/params/node_params.yaml)。
+将会运行串口通信、导航和行为决策模块，参数读取自配置文件 [node_params](./src/pb2025_sentry_bringup/params/node_params.yaml)。
 
 ```bash
 ros2 launch pb2025_sentry_bringup bringup.launch.py \
-world:=<YOUR_PARAMS_FILE> \
+map:=/absolute/path/to/<YOUR_MAP>.yaml \
+params_file:=/absolute/path/to/node_params.yaml \
 use_rviz:=True
 ```
 
 ## 3. 常用调试启动命令
 
 > [!NOTE]
-> 请自行替换 `<YOUR_WORLD_NAME>` 为你的 map, pcd 的文件名；替换 `<YOUR_PARAMS_FILE>` 为你的配置文件的**绝对路径**，如 [node_params](./src/pb2025_sentry_bringup/params/node_params.yaml)。
+> `map`、`prior_pcd_file` 和 `params_file` 使用绝对路径。上面的 `params_file` 可指向工作区自带的 [node_params](./src/pb2025_sentry_bringup/params/node_params.yaml)。直接启动导航子模块时，再将 `<YOUR_WORLD_NAME>` 替换为 Nav2 地图文件名。
 
 ### 3.1 子模块
 
@@ -118,25 +118,10 @@ ros2 launch livox_ros_driver2 rviz_MID360_launch.py \
   rviz_config:=/绝对路径/display_point_cloud.rviz
 ```
 
-Camera
-
-```bash
-ros2 launch hik_camera_ros2_driver hik_camera_launch.py params_file:=<YOUR_PARAMS_FILE>
-```
-
 Serial
 
 ```bash
 ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py use_rviz:=True params_file:=<YOUR_PARAMS_FILE>
-```
-
-Vision
-
-```bash
-ros2 launch pb2025_vision_bringup rm_vision_reality_launch.py \
-use_composition:=True \
-use_rviz:=True \
-params_file:=<YOUR_PARAMS_FILE>
 ```
 
 Navigation
@@ -178,10 +163,8 @@ ros2 run nav2_map_server map_saver_cli -f <YOUR_WORLD_NAME>
 #### 3.3.1 Record
 
 > [!TIP]
-> 图像信息占用空间极大，若不需要录制图像信息，可删除 `front_industrial_camera/image` 和 `front_industrial_camera/camera_info`。建议降低 hik_camera_ros2_driver 参数中的相机帧率，以减少 rosbag 文件大小。
-
 > [!NOTE]
-> 本命令仅录制了传感器数据，没有直接录制 tf 信息，因此启动导航/视觉模块时，应设置 `use_robot_state_pub:=True`，以使用 joint_state 数据生成并发布整车 TF。
+> 本命令仅录制了传感器数据，没有直接录制 tf 信息，因此回放时启动导航应设置 `use_robot_state_pub:=True`，以使用 joint_state 数据生成并发布整车 TF。
 
 方法一：根据裁判系统数据自动触发录包
 
@@ -196,8 +179,6 @@ ros2 bag record -o sentry_$(date +%Y%m%d_%H%M%S) \
 /serial/gimbal_joint_state \
 /livox/imu \
 /livox/lidar \
-/front_industrial_camera/image \
-/front_industrial_camera/camera_info \
 --compression-mode file --compression-format zstd -d 30
 ```
 
@@ -218,6 +199,5 @@ world:=<YOUR_WORLD_NAME> \
 use_composition:=False \
 use_rviz:=True \
 use_sim_time:=True \
-use_hik_camera:=False \
 use_robot_state_pub:=True
 ```

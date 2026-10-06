@@ -24,11 +24,6 @@ repositories:
     url: https://github.com/LihanChen2004/joint_state_publisher.git
     version: feat-offset-timestamp
 
-  src/dependencies/hik_camera_ros2_driver:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/hik_camera_ros2_driver.git
-    version: main
-
   src/dependencies/rmoss_core:
     type: git
     url: https://github.com/SMBU-PolarBear-Robotics-Team/rmoss_core.git
@@ -54,11 +49,6 @@ repositories:
     url: https://github.com/SMBU-PolarBear-Robotics-Team/BehaviorTree.ROS2.git
     version: humble
 
-  src/interfaces/auto_aim_interfaces:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/auto_aim_interfaces.git
-    version: main
-
   src/interfaces/pb_rm_interfaces:
     type: git
     url: https://github.com/SMBU-PolarBear-Robotics-Team/pb_rm_interfaces.git
@@ -82,16 +72,6 @@ repositories:
   src/pb2025_sentry_nav:
     type: git
     url: https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_sentry_nav.git
-    version: main
-
-  src/pb2025_rm_vision:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/pb2025_rm_vision.git
-    version: main
-
-  src/pb2025_rm_vision/armor_detector_openvino:
-    type: git
-    url: https://github.com/SMBU-PolarBear-Robotics-Team/armor_detector_openvino.git
     version: main
 
   src/pb2025_sentry_behavior:

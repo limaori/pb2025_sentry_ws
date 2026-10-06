@@ -25,13 +25,11 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
-    PathJoinSubstitution,
     PythonExpression,
     TextSubstitution,
 )
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
-from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
 
 
@@ -46,10 +44,6 @@ def generate_launch_description():
     # Create the launch configuration variables
     ## Serial
     robot_name = LaunchConfiguration("robot_name")
-    ## Vision
-    use_vision = LaunchConfiguration("use_vision")
-    detector = LaunchConfiguration("detector")
-    use_hik_camera = LaunchConfiguration("use_hik_camera")
     ## Navigation
     slam = LaunchConfiguration("slam")
     world = LaunchConfiguration("world")
@@ -58,6 +52,7 @@ def generate_launch_description():
     ## Common
     namespace = LaunchConfiguration("namespace")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    autostart = LaunchConfiguration("autostart")
     params_file = LaunchConfiguration("params_file")
     rviz_config_file = LaunchConfiguration("rviz_config_file")
     use_robot_state_pub = LaunchConfiguration("use_robot_state_pub")
@@ -86,24 +81,6 @@ def generate_launch_description():
         "robot_name",
         default_value="pb2025_sentry_robot",
         description="The file name of the robot xmacro to be used",
-    )
-
-    declare_use_vision_cmd = DeclareLaunchArgument(
-        "use_vision",
-        default_value="False",
-        description="Whether to start the camera and vision pipeline",
-    )
-
-    declare_detector_cmd = DeclareLaunchArgument(
-        "detector",
-        default_value="opencv",
-        description="Type of detector to use (option: 'opencv', 'openvino')",
-    )
-
-    declare_use_hik_camera_cmd = DeclareLaunchArgument(
-        "use_hik_camera",
-        default_value="False",
-        description="Whether to bringup hik camera node",
     )
 
     declare_slam_cmd = DeclareLaunchArgument(
@@ -146,6 +123,12 @@ def generate_launch_description():
         "use_sim_time",
         default_value="False",
         description="Use simulation (Gazebo) clock if true",
+    )
+
+    declare_autostart_cmd = DeclareLaunchArgument(
+        "autostart",
+        default_value="true",
+        description="Automatically startup the navigation stack",
     )
 
     declare_params_file_cmd = DeclareLaunchArgument(
@@ -204,36 +187,30 @@ def generate_launch_description():
         }.items(),
     )
 
-    start_vision_launch_cmd = IncludeLaunchDescription(
+    start_robot_state_publisher_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [
-                    FindPackageShare("pb2025_vision_bringup"),
-                    "launch",
-                    "rm_vision_reality_launch.py",
-                ]
-            )
+            os.path.join(navigation_bringup_dir, "launch", "robot_state_publisher_launch.py")
         ),
-        condition=IfCondition(use_vision),
+        condition=IfCondition(use_robot_state_pub),
         launch_arguments={
-            "detector": detector,
-            "use_hik_camera": use_hik_camera,
+            "robot_name": robot_name,
             "namespace": namespace,
             "use_sim_time": use_sim_time,
-            "params_file": params_file,
-            "use_robot_state_pub": use_robot_state_pub,
-            "use_composition": use_composition,
-            "use_rviz": "False",
-            "use_respawn": use_respawn,
-            "log_level": log_level,
         }.items(),
+    )
+
+    start_livox_driver_cmd = Node(
+        package="livox_ros_driver2",
+        executable="livox_ros_driver2_node",
+        name="livox_ros_driver2",
+        output="screen",
+        namespace=namespace,
+        parameters=[configured_params],
     )
 
     start_navigation_launch_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                navigation_bringup_dir, "launch", "rm_navigation_reality_launch.py"
-            )
+            os.path.join(navigation_bringup_dir, "launch", "bringup_launch.py")
         ),
         launch_arguments={
             "slam": slam,
@@ -242,10 +219,21 @@ def generate_launch_description():
             "namespace": namespace,
             "use_sim_time": use_sim_time,
             "params_file": params_file,
-            "use_robot_state_pub": use_robot_state_pub,
-            "use_rviz": "False",
+            "autostart": autostart,
             "use_composition": use_composition,
             "use_respawn": use_respawn,
+            "log_level": log_level,
+        }.items(),
+    )
+
+    start_joy_teleop_cmd = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(navigation_bringup_dir, "launch", "joy_teleop_launch.py")
+        ),
+        launch_arguments={
+            "namespace": namespace,
+            "use_sim_time": use_sim_time,
+            "joy_config_file": params_file,
         }.items(),
     )
 
@@ -293,15 +281,13 @@ def generate_launch_description():
 
     # Declare the launch options
     ld.add_action(declare_robot_name_cmd)
-    ld.add_action(declare_use_vision_cmd)
-    ld.add_action(declare_detector_cmd)
-    ld.add_action(declare_use_hik_camera_cmd)
     ld.add_action(declare_slam_cmd)
     ld.add_action(declare_world_cmd)
     ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_prior_pcd_file_cmd)
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_use_sim_time_cmd)
+    ld.add_action(declare_autostart_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_rviz_config_file_cmd)
     ld.add_action(declare_use_robot_state_pub_cmd)
@@ -313,8 +299,10 @@ def generate_launch_description():
     # Add the actions to launch all of the navigation nodes
     ld.add_action(start_rviz_cmd)
     ld.add_action(start_serial_driver_cmd)
-    ld.add_action(start_vision_launch_cmd)
+    ld.add_action(start_robot_state_publisher_cmd)
+    ld.add_action(start_livox_driver_cmd)
     ld.add_action(start_navigation_launch_cmd)
+    ld.add_action(start_joy_teleop_cmd)
     ld.add_action(start_behavior_launch_cmd)
     ld.add_action(record_rosbag_cmd)
 

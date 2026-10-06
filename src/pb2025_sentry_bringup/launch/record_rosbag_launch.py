@@ -31,8 +31,6 @@ def generate_launch_description():
             "/serial/gimbal_joint_state",
             "/livox/imu",
             "/livox/lidar",
-            "/front_industrial_camera/image",
-            "/front_industrial_camera/camera_info",
             "--compression-mode",
             "file",
             "--compression-format",

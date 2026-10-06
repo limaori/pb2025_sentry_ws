@@ -55,14 +55,7 @@ def generate_launch_description():
         namespace=namespace,
         arguments=["-d", rviz_config_file],
         output="screen",
-        remappings=[
-            ("/tf", "tf"),
-            ("/tf_static", "tf_static"),
-            (
-                "/front_industrial_camera/camera_info",
-                "front_industrial_camera/camera_info",
-            ),
-        ],
+        remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
     )
 
     exit_event_handler = RegisterEventHandler(

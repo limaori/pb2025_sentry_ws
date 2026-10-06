@@ -48,9 +48,6 @@ list(APPEND plugin_libs is_status_ok)
 ament_auto_add_library(is_attacked SHARED plugins/condition/is_attacked.cpp)
 list(APPEND plugin_libs is_attacked)
 
-ament_auto_add_library(is_detect_enemy SHARED plugins/condition/is_detect_enemy.cpp)
-list(APPEND plugin_libs is_detect_enemy)
-
 ####### Actions #######
 ament_auto_add_library(send_nav2_goal SHARED plugins/action/send_nav2_goal.cpp)
 list(APPEND plugin_libs send_nav2_goal)
@@ -69,9 +66,6 @@ list(APPEND plugin_libs pub_gimbal_absolute)
 
 ament_auto_add_library(pub_gimbal_velocity SHARED plugins/action/pub_gimbal_velocity.cpp)
 list(APPEND plugin_libs pub_gimbal_velocity)
-
-ament_auto_add_library(calculate_attack_pose SHARED plugins/action/calculate_attack_pose.cpp)
-list(APPEND plugin_libs calculate_attack_pose)
 
 ####### Controls #######
 ament_auto_add_library(recovery_node SHARED plugins/control/recovery_node.cpp)
